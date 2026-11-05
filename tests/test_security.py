@@ -27,6 +27,10 @@ import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+VENV_SITE = "/tmp/test_venv/lib/python3.13/site-packages"
+if os.path.exists(VENV_SITE) and VENV_SITE not in sys.path:
+    sys.path.insert(0, VENV_SITE)
+
 import discord
 
 import groq_agent

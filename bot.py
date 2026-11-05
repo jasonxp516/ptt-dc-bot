@@ -9,6 +9,16 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+# Windows console UTF-8 reconfiguration (Spec §8.4)
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import discord
 from discord import app_commands
 from dotenv import load_dotenv
@@ -46,6 +56,22 @@ try:
 except Exception:
     pass
 
+
+def is_stream_interactive(stream: Any) -> bool:
+    """Safely check if an I/O stream is attached to an interactive terminal."""
+    try:
+        if not stream or getattr(stream, "closed", False) is True:
+            return False
+        return bool(hasattr(stream, "isatty") and stream.isatty())
+    except (ValueError, AttributeError, OSError):
+        return False
+
+
+def is_interactive() -> bool:
+    """Safely check if standard input is an interactive terminal."""
+    return is_stream_interactive(sys.stdin)
+
+
 # Setup Rotating File Logging (C1 & P1-6: max 5MB x 3 backups; only attach StreamHandler on interactive TTY or Docker)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _log_dir = os.path.dirname(os.path.abspath(LOG_PATH))
@@ -57,7 +83,7 @@ _log_handlers: List[logging.Handler] = [
         LOG_PATH, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
 ]
-if sys.stdout.isatty() or os.getenv("LOG_TO_STDOUT", "").strip() == "1":
+if is_stream_interactive(sys.stdout) or os.getenv("LOG_TO_STDOUT", "").strip() == "1":
     _log_handlers.append(logging.StreamHandler())
 
 logging.basicConfig(
@@ -176,6 +202,10 @@ class PTTDiscordBot(discord.Client):
         self.detected_owner_id: str = str(OWNER_USER_ID or "")
 
     async def setup_hook(self) -> None:
+        try:
+            self.add_view(SetupPanelView(bot_instance=self, timeout=None))
+        except Exception as e:
+            logger.debug(f"無法註冊持久性 SetupPanelView: {e}")
         self._poll_task = asyncio.create_task(self._polling_loop())
 
     async def close(self) -> None:
@@ -185,6 +215,87 @@ class PTTDiscordBot(discord.Client):
         await self.crawler.close()
         self.storage.close()
         await super().close()
+
+    async def _check_and_send_owner_welcome(self) -> None:
+        """
+        F18–F19: Clean boot detection, owner resolution, and welcome DM dispatch with deduplication.
+        """
+        try:
+            push_channel = self.storage.get_push_channel_id(1)
+            keywords = self.storage.get_keywords()
+            already_sent = self.storage.get_setting("owner_welcome_sent")
+
+            if push_channel is None and len(keywords) == 0 and already_sent != "1":
+                logger.info("偵測到全新安裝環境 (0 推播頻道、0 關鍵字)，準備向擁有者發送歡迎與引導私訊...")
+                print(
+                    "\n" + "=" * 72 + "\n"
+                    "[PTT-DC-Bot] 首次啟動導引：\n"
+                    "機器人已成功登入！請在 Discord 伺服器或私訊中輸入 `/setup` 快速完成推播與看板設定。\n"
+                    + "=" * 72 + "\n",
+                    flush=True,
+                )
+
+                try:
+                    app_info = await self.application_info()
+                    owner = (
+                        app_info.team.owner
+                        if getattr(app_info, "team", None)
+                        else app_info.owner
+                    )
+                except Exception as e:
+                    logger.warning(f"取得 Application Info 失敗: {e}")
+                    owner = None
+
+                if owner and not hasattr(owner, "send"):
+                    try:
+                        owner = self.get_user(owner.id) or await self.fetch_user(owner.id)
+                    except Exception as e:
+                        logger.warning(f"無法取得擁有者 User 物件 (ID: {owner.id}): {e}")
+                        owner = None
+
+                if owner:
+                    if not self.detected_owner_id:
+                        self.detected_owner_id = str(owner.id)
+
+                    welcome_embed = discord.Embed(
+                        title="👋 歡迎使用 PTT-DC-Bot 智慧追蹤機器人！",
+                        description=(
+                            "感謝安裝 PTT-DC-Bot！這是您的首次啟動引導。\n\n"
+                            "💡 **快速設定 4 步驟**：\n"
+                            "1. 在您要接收推播的伺服器頻道輸入 `/setup`\n"
+                            "2. 點擊 **「📌 綁定此頻道為推播頻道」**\n"
+                            "3. 點選 **「📋 快速選擇監控看板」** 下拉選單勾選想追蹤的看板\n"
+                            "4. 點擊 **「➕ 新增追蹤關鍵字」** 填入想追蹤的商品型號與預算上限！\n\n"
+                            "✨ 您也可以直接在此私訊輸入 `/setup` 開啟**個人專屬私訊推播**！"
+                        ),
+                        color=discord.Color.from_rgb(46, 204, 113),
+                        timestamp=datetime.now(),
+                    )
+                    welcome_embed.add_field(
+                        name="🛠️ 常用指令",
+                        value=(
+                            "• `/setup`：視覺化設定面板（推薦新手使用）\n"
+                            "• `/ai`：自然語言 AI 助手（設定條件、查看板）\n"
+                            "• `/scan_unsold`：掃描目前版上尚未售出的商品\n"
+                            "• `/status`：查看機器人巡檢狀態"
+                        ),
+                        inline=False,
+                    )
+                    welcome_embed.set_footer(text="PTT-DC-Bot 開箱即用體驗")
+
+                    try:
+                        await owner.send(embed=welcome_embed)
+                        logger.info(f"已成功發送首次歡迎私訊給機器人擁有者: {owner} (ID: {owner.id})")
+                    except discord.Forbidden:
+                        logger.warning(
+                            f"無法私訊機器人擁有者 (ID: {owner.id})：該使用者關閉了私訊接收權限 (discord.Forbidden)"
+                        )
+                    except Exception as e:
+                        logger.warning(f"發送首次歡迎私訊失敗: {e}")
+
+                self.storage.set_setting("owner_welcome_sent", "1")
+        except Exception as e:
+            logger.error(f"檢查與發送擁有者歡迎私訊時發生錯誤: {e}", exc_info=True)
 
     async def on_ready(self) -> None:
         logger.info(f"機器人已登入 Discord: {self.user} (ID: {self.user.id})")
@@ -200,6 +311,9 @@ class PTTDiscordBot(discord.Client):
                 )
             except Exception as e:
                 logger.warning(f"全域同步 Slash 指令失敗: {e}")
+
+        # F18–F19: Clean boot detection and Owner Welcome DM
+        await self._check_and_send_owner_welcome()
 
         for guild in self.guilds:
             # Auto-detect owner ID from the primary home guild if OWNER_USER_ID is not set in .env
@@ -899,6 +1013,494 @@ async def fuzzy_autocomplete(
         if current.lower() in display.lower():
             choices.append(app_commands.Choice(name=display[:100], value=str(r["id"])))
     return choices[:25]
+
+
+# =====================================================================
+# Milestone 3 (F13–F17): Discord /setup Interactive UI Panel & Modals
+# =====================================================================
+
+POPULAR_BOARDS = [
+    ("HardwareSale", "電蝦二手 (電腦零件/周邊)", "🖥️"),
+    ("MacShop", "蘋果二手 (Apple 裝置/配件)", "🍎"),
+    ("nb-shopping", "筆電交易 (筆記型電腦/二手筆電)", "💻"),
+    ("Gamesale", "遊戲交易 (遊戲片/主機周邊)", "🎮"),
+    ("MobileComm", "手機通訊 (智慧手機/通訊設備)", "📱"),
+]
+
+
+class PopularBoardsSelect(discord.ui.Select):
+    """F14: Multi-select dropdown for instantly monitoring top trading boards."""
+
+    def __init__(
+        self,
+        bot_instance: Optional[Any] = None,
+        subscriber: Optional[Dict[str, Any]] = None,
+        bot: Optional[Any] = None,
+    ):
+        self.bot_instance = bot_instance or bot
+        self.bot = self.bot_instance
+        self.subscriber = subscriber
+        options = [
+            discord.SelectOption(
+                label=board,
+                value=board,
+                description=desc[:50],
+                emoji=emoji,
+            )
+            for board, desc, emoji in POPULAR_BOARDS
+        ]
+        super().__init__(
+            placeholder="📋 快速選擇監控看板（可多選）...",
+            custom_id="ptt:setup:select_board",
+            min_values=1,
+            max_values=len(options),
+            options=options,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        bot_inst = self.bot or getattr(interaction.client, "bot", interaction.client)
+        sub = self.subscriber
+        if not sub:
+            sub, _, err = resolve_interaction_subscriber(
+                interaction, scope_choice="auto", require_write_perm=True
+            )
+            if err or not sub:
+                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                return
+
+        selected = getattr(self, "values", []) or getattr(interaction, "data", {}).get("values", [])
+        if not selected:
+            await interaction.response.send_message("⚠️ 請選擇至少一個看板！", ephemeral=True)
+            return
+
+        added_boards = []
+        already_tracked = []
+        for board_name in selected:
+            if bot_inst.storage.is_board_tracked(board_name):
+                already_tracked.append(board_name)
+            else:
+                ok = bot_inst.storage.add_board(board_name)
+                if ok:
+                    added_boards.append(board_name)
+                else:
+                    already_tracked.append(board_name)
+
+        msg_parts = []
+        if added_boards:
+            msg_parts.append(f"✅ 成功將看板加入監控：{', '.join(f'`{b}`' for b in added_boards)}")
+        if already_tracked:
+            msg_parts.append(f"ℹ️ 看板已在監控名單中：{', '.join(f'`{b}`' for b in already_tracked)}")
+        msg_parts.append("💡 提示：可點擊下方 **「➕ 新增追蹤關鍵字」** 設定要追蹤的商品！")
+
+        await interaction.response.send_message("\n".join(msg_parts), ephemeral=True)
+
+
+class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
+    """F16: Modal form for adding exact monitoring keywords with price caps."""
+
+    keyword = discord.ui.TextInput(
+        label="追蹤關鍵字 (必填)",
+        placeholder="例如: 3060Ti 或 3060 -筆電",
+        required=True,
+        max_length=50,
+        style=discord.TextStyle.short,
+    )
+    board = discord.ui.TextInput(
+        label="目標看板 (選填，留空預設 HardwareSale)",
+        default="HardwareSale",
+        required=False,
+        max_length=30,
+        style=discord.TextStyle.short,
+    )
+    category = discord.ui.TextInput(
+        label="限定分類 (選填，留空預設 賣)",
+        default="賣",
+        required=False,
+        max_length=10,
+        style=discord.TextStyle.short,
+    )
+    max_price = discord.ui.TextInput(
+        label="預算上限 (新台幣整數，留空代表不限)",
+        placeholder="例如: 6500 (超過此金額自動不推播)",
+        required=False,
+        max_length=15,
+        style=discord.TextStyle.short,
+    )
+
+    def __init__(
+        self,
+        bot_instance: Optional[Any] = None,
+        subscriber: Optional[Dict[str, Any]] = None,
+        scope_label: str = "",
+        bot: Optional[Any] = None,
+    ):
+        super().__init__()
+        self.bot_instance = bot_instance or bot
+        self.bot = self.bot_instance
+        self.subscriber = subscriber
+        self.scope_label = scope_label
+        # Alias inputs for external compatibility
+        self.keyword_input = self.keyword
+        self.board_input = self.board
+        self.category_input = self.category
+        self.max_price_input = self.max_price
+
+    async def on_submit(self, interaction: discord.Interaction):
+        kw_val = str(getattr(self.keyword, "value", "") or "").strip()
+        board_val = str(getattr(self.board, "value", "") or "").strip() or "HardwareSale"
+        cat_val = str(getattr(self.category, "value", "") or "").strip() or "賣"
+        price_raw = str(getattr(self.max_price, "value", "") or "").strip()
+
+        if not kw_val:
+            await interaction.response.send_message("❌ 關鍵字不可為空！", ephemeral=True)
+            return
+
+        # Canonicalize board name
+        if board_val.upper() != "ALL" and board_val.lower() in COMMON_BOARDS_MAP:
+            board_val = COMMON_BOARDS_MAP[board_val.lower()]
+
+        # Parse and validate max_price
+        price_val: Optional[int] = None
+        if price_raw:
+            cleaned = (
+                price_raw.replace(",", "")
+                .replace("，", "")
+                .replace("$", "")
+                .replace("NT", "")
+                .replace("nt", "")
+                .replace("元", "")
+                .replace("塊", "")
+                .strip()
+            )
+            if cleaned.isdigit():
+                price_val = int(cleaned)
+            else:
+                extracted = extract_first_price_int(price_raw)
+                if extracted is not None:
+                    price_val = extracted
+                else:
+                    await interaction.response.send_message(
+                        f"❌ 預算上限格式錯誤：`{price_raw}` 無法識別為有效金額。\n"
+                        "請輸入純整數金額（例如：`6500`）或留空！",
+                        ephemeral=True,
+                    )
+                    return
+
+            if price_val < 100 or price_val > 500000:
+                await interaction.response.send_message(
+                    f"❌ 預算上限金額需介於 100 ~ 500,000 元之間（您輸入的是：`{price_val}` 元）！",
+                    ephemeral=True,
+                )
+                return
+
+        bot_inst = self.bot or getattr(interaction.client, "bot", interaction.client)
+        sub = self.subscriber
+        if not sub:
+            sub, _, err = resolve_interaction_subscriber(
+                interaction, scope_choice="auto", require_write_perm=True
+            )
+            if err or not sub:
+                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                return
+
+        ok, msg = bot_inst.storage.add_keyword(
+            keyword=kw_val,
+            board=board_val,
+            category=cat_val,
+            subscriber_id=sub["id"],
+            max_price=price_val,
+        )
+        if ok:
+            price_note = f", 預算上限: `{price_val:,}元`" if price_val else ""
+            await interaction.response.send_message(
+                f"✅ {msg}\n• 關鍵字：`{kw_val}`\n• 看板：`{board_val}` | 分類：`{cat_val}`{price_note}",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(f"⚠️ {msg}", ephemeral=True)
+
+
+class SetupPanelView(discord.ui.View):
+    """F13–F17: Interactive UI panel with board select menu and action buttons."""
+
+    def __init__(
+        self,
+        bot_instance: Optional[Any] = None,
+        subscriber: Optional[Dict[str, Any]] = None,
+        scope_label: str = "",
+        timeout: Optional[float] = 300.0,
+        bot: Optional[Any] = None,
+    ):
+        super().__init__(timeout=timeout)
+        self.bot_instance = bot_instance or bot
+        self.bot = self.bot_instance
+        self.subscriber = subscriber
+        self.scope_label = scope_label
+
+        # Row 0: Popular boards multi-select
+        self.board_select = PopularBoardsSelect(
+            bot_instance=self.bot_instance,
+            subscriber=self.subscriber,
+        )
+        self.add_item(self.board_select)
+        self.btn_bind_channel = self.bind_channel_button
+        self.btn_add_keyword = self.add_keyword_button
+        self.btn_test_push = self.test_push_button
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.subscriber and self.subscriber.get("scope") == "user":
+            if str(interaction.user.id) != str(self.subscriber.get("discord_id")):
+                await interaction.response.send_message(
+                    "❌ 這是其他使用者的設定面板，您無法進行操作。", ephemeral=True
+                )
+                return False
+        elif interaction.guild:
+            if not has_guild_write_permission(interaction.user, interaction.guild):
+                await interaction.response.send_message(
+                    "🔒 修改「伺服器共用追蹤」需要伺服器的 `管理伺服器 (Manage Server)` 或 `管理頻道 (Manage Channels)` 權限！",
+                    ephemeral=True,
+                )
+                return False
+        return True
+
+    @discord.ui.button(
+        label="📌 綁定此頻道為推播頻道",
+        style=discord.ButtonStyle.primary,
+        custom_id="ptt:setup:bind_channel",
+        emoji="📌",
+        row=1,
+    )
+    async def bind_channel_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        bot_inst = self.bot or getattr(interaction.client, "bot", interaction.client)
+        sub = self.subscriber
+        if not sub:
+            sub, scope_label, err = resolve_interaction_subscriber(
+                interaction, scope_choice="auto", require_write_perm=True
+            )
+            if err or not sub:
+                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                return
+        else:
+            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+
+        if interaction.guild is None or sub.get("scope") == "user":
+            bot_inst.storage.update_subscriber_channel(sub["id"], None)
+            await interaction.response.send_message(
+                "✅ 已成功將推播目標設定為 **Discord 私訊 (DM 直接通知)**！", ephemeral=True
+            )
+        else:
+            ch_id = str(interaction.channel_id)
+            bot_inst.storage.update_subscriber_channel(sub["id"], ch_id)
+            await interaction.response.send_message(
+                f"✅ 已成功將 <#{ch_id}> 綁定為 **{scope_label}** 的推播通知頻道！", ephemeral=True
+            )
+
+    @discord.ui.button(
+        label="➕ 新增追蹤關鍵字",
+        style=discord.ButtonStyle.success,
+        custom_id="ptt:setup:add_keyword",
+        emoji="➕",
+        row=1,
+    )
+    async def add_keyword_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        bot_inst = self.bot or getattr(interaction.client, "bot", interaction.client)
+        sub = self.subscriber
+        if not sub:
+            sub, scope_label, err = resolve_interaction_subscriber(
+                interaction, scope_choice="auto", require_write_perm=True
+            )
+            if err or not sub:
+                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                return
+        else:
+            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+
+        modal = KeywordAddModal(
+            bot_instance=bot_inst,
+            subscriber=sub,
+            scope_label=scope_label,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(
+        label="🔔 測試推播通知",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ptt:setup:test_push",
+        emoji="🔔",
+        row=1,
+    )
+    async def test_push_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        bot_inst = self.bot or getattr(interaction.client, "bot", interaction.client)
+        sub = self.subscriber
+        if not sub:
+            sub, scope_label, err = resolve_interaction_subscriber(
+                interaction, scope_choice="auto", require_write_perm=False
+            )
+            if err or not sub:
+                await interaction.response.send_message(err or "❌ 查無設定", ephemeral=True)
+                return
+        else:
+            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+
+        fresh_sub = bot_inst.storage.get_subscriber_by_id(sub["id"]) or sub
+        target = await bot_inst.delivery.resolve_subscriber_target(fresh_sub)
+        if target is None:
+            await interaction.response.send_message(
+                "⚠️ 尚未綁定推播目標！請先點擊「📌 綁定此頻道為推播頻道」完成綁定，或使用 `/channel_set` 設定推播目標！",
+                ephemeral=True,
+            )
+            return
+
+        sample_article = {
+            "title": "[測試/推播] PTT-DC-Bot 通知權限與卡片格式測試",
+            "url": "https://www.ptt.cc/bbs/HardwareSale/index.html",
+            "author": "PTTBot",
+            "board": "HardwareSale",
+            "category": "測試",
+            "date": datetime.now().strftime("%m/%d"),
+            "nrec": "99",
+        }
+        detail = {
+            "extracted_price": "6,500元",
+            "extracted_location": "全台賣貨便 / 台北面交",
+            "buyer_queue_count": 0,
+            "ai_summary_note": "這是一則測試推播訊息，代表推播頻道權限與 Discord Embed 卡片格式運作完全正常！",
+        }
+        embed = build_article_embed(
+            sample_article,
+            matched_keywords=["測試"],
+            detail=detail,
+            scope_label=scope_label,
+        )
+        view = ArticleLinkView(sample_article["url"], sample_article["board"])
+        try:
+            await target.send(
+                content="🔔 **【PTT-DC-Bot 測試推播】** 恭喜！推播頻道通知與卡片格式皆正常運作！",
+                embed=embed,
+                view=view,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            target_name = getattr(target, "mention", "您的私訊 (DM)")
+            await interaction.response.send_message(
+                f"✅ 測試推播卡片已成功發送至 {target_name}！請確認是否有正常收到訊息。",
+                ephemeral=True,
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "❌ 推播發送失敗：機器人缺乏在目標頻道傳送訊息或 Embed 之權限 (discord.Forbidden)！",
+                ephemeral=True,
+            )
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ 發送失敗：{e}", ephemeral=True
+            )
+
+
+def build_setup_panel_embed(
+    sub: Dict[str, Any],
+    scope_label: str = "",
+    storage: Optional[BotStorage] = None,
+    is_dm: bool = False,
+) -> discord.Embed:
+    storage_inst = storage or bot.storage
+    if not scope_label:
+        scope_label = "👤 個人專屬追蹤" if (is_dm or sub.get("scope") == "user") else "🏠 伺服器共用追蹤"
+
+    push_ch = sub.get("push_channel_id")
+    if push_ch:
+        ch_text = f"<#{push_ch}> (`{push_ch}`)"
+    else:
+        ch_text = "💬 **Discord 私訊 (DM 直接通知)**" if (is_dm or sub.get("scope") == "user") else "⚠️ **尚未綁定**（請點擊下方按鈕設定）"
+
+    boards = [b["name"] for b in storage_inst.get_boards()]
+    kws = storage_inst.get_keywords(subscriber_id=sub["id"])
+    quota = storage_inst.get_subscriber_quota(sub["id"])
+
+    embed = discord.Embed(
+        title="⚙️ PTT-DC-Bot 視覺化互動設定面板",
+        description=(
+            f"**歸屬範圍**：`{scope_label}`\n"
+            "歡迎使用 PTT 智慧追蹤機器人！透過本面板，您可以一鍵完成推播頻道綁定、"
+            "勾選熱門二手交易看板、新增追蹤關鍵字，並發送測試推播驗證。"
+        ),
+        color=discord.Color.from_rgb(52, 152, 219),
+        timestamp=datetime.now(),
+    )
+    embed.add_field(
+        name="📍 目前推播目標",
+        value=ch_text,
+        inline=False,
+    )
+    embed.add_field(
+        name=f"📋 系統監控看板 ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
+        value=", ".join(f"`{b}`" for b in boards) if boards else "尚未加入任何看板",
+        inline=False,
+    )
+    kw_summary = (
+        ", ".join(f"`{k['keyword']}`" for k in kws[:10])
+        if kws
+        else "尚未設定關鍵字（點擊下方按鈕新增）"
+    )
+    embed.add_field(
+        name=f"🎯 已設定追蹤關鍵字 ({len(kws)}/{quota.get('max_keywords', 10)})",
+        value=kw_summary,
+        inline=False,
+    )
+    embed.add_field(
+        name="🚀 快速設定引導",
+        value=(
+            "1️⃣ 點擊 **「📌 綁定此頻道為推播頻道」** 設定通知目標\n"
+            "2️⃣ 在下拉選單中快速勾選要監控的 **熱門交易看板**\n"
+            "3️⃣ 點擊 **「➕ 新增追蹤關鍵字」** 填入想購買的商品與預算上限\n"
+            "4️⃣ 點擊 **「🔔 測試推播通知」** 確認通知卡片正常送達"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="PTT-DC-Bot /setup 互動設定面板")
+    return embed
+
+
+# =====================================================================
+# Slash Command 0: Visual Setup Panel (/setup)
+# =====================================================================
+@bot.tree.command(
+    name="setup",
+    description="⚙️ 開啟視覺化互動設定面板（一鍵綁定推播頻道、熱門看板、新增關鍵字與推播測試）",
+)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(
+    scope="選擇要設定「個人專屬追蹤(私訊)」或「伺服器共用追蹤」",
+)
+@app_commands.choices(scope=SCOPE_CHOICES)
+async def cmd_setup(
+    interaction: discord.Interaction,
+    scope: str = "auto",
+):
+    sub, scope_label, err = resolve_interaction_subscriber(
+        interaction, scope_choice=scope, require_write_perm=True
+    )
+    if err or not sub:
+        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        return
+
+    embed = build_setup_panel_embed(sub, scope_label, bot.storage)
+    view = SetupPanelView(
+        bot_instance=bot,
+        subscriber=sub,
+        scope_label=scope_label,
+    )
+    await interaction.response.send_message(
+        embed=enforce_embed_limits(embed), view=view, ephemeral=True
+    )
 
 
 # =====================================================================
@@ -2379,15 +2981,69 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
 
 
 def main() -> None:
-    for sensitive_file in (os.path.join(BASE_DIR, ".env"), DB_PATH):
-        if os.path.exists(sensitive_file):
+    # Set POSIX file permissions (guarded on Windows NT)
+    if os.name != "nt":
+        for sensitive_file in (os.path.join(BASE_DIR, ".env"), DB_PATH):
+            if os.path.exists(sensitive_file):
+                try:
+                    os.chmod(sensitive_file, 0o600)
+                except Exception:
+                    pass
+
+    raw_token = os.getenv("DISCORD_TOKEN", "").strip() or (DISCORD_TOKEN.strip() if isinstance(DISCORD_TOKEN, str) else "")
+    token = re.sub(r"^[Bb][Oo][Tt](\s+|$)", "", raw_token).strip()
+    placeholders = {
+        "your_discord_bot_token_here",
+        "your_discord_token_here",
+        "change_me",
+        "your_token_here",
+    }
+    is_missing_or_placeholder = not token or token.lower() in placeholders
+
+    if is_missing_or_placeholder:
+        if is_interactive():
+            logger.info("未檢測到有效 DISCORD_TOKEN，正在啟動首次設定精靈...")
+            from setup_wizard import run_wizard
+
+            success = run_wizard()
+            if not success:
+                logger.error("設定精靈已取消或失敗，程式終止。")
+                sys.exit(1)
+
+            # 重新載入 .env
+            env_file = os.path.join(BASE_DIR, ".env")
+            load_dotenv(env_file, override=True)
+            token = os.getenv("DISCORD_TOKEN", "").strip()
+            token = re.sub(r"^[Bb][Oo][Tt](\s+|$)", "", token).strip()
+            if not token or token.lower() in placeholders:
+                logger.error("設定精靈完成後仍未取得有效的 DISCORD_TOKEN，程式終止。")
+                sys.exit(1)
+
+            # 更新排程器與 Agent 之 API Key
+            new_groq_key = os.getenv("GROQ_API_KEY", "").strip()
+            if new_groq_key:
+                bot.scheduler.api_key = new_groq_key
+                bot.agent.api_key = new_groq_key
+        else:
             try:
-                os.chmod(sensitive_file, 0o600)
-            except Exception:
+                if sys.stderr and hasattr(sys.stderr, "write"):
+                    sys.stderr.write(
+                        "========================================================================\n"
+                        "[PTT-DC-Bot] 錯誤：尚未配置 Discord Bot 憑證 (DISCORD_TOKEN)！\n"
+                        "當前處於非互動式環境 (Non-TTY / Docker / systemd)。\n"
+                        "請透過以下方式之一完成設定：\n"
+                        "  1. 在互動式終端機中執行精靈：python3 setup_wizard.py\n"
+                        "  2. 複製範本並填入憑證：cp .env.example .env && nano .env\n"
+                        "  3. 在 Docker / 容器環境中透過環境變數傳入 DISCORD_TOKEN\n"
+                        "========================================================================\n"
+                    )
+                    if hasattr(sys.stderr, "flush"):
+                        sys.stderr.flush()
+            except (ValueError, AttributeError, OSError):
                 pass
-    if not DISCORD_TOKEN:
-        raise RuntimeError("請在 .env 檔案中設定 DISCORD_TOKEN")
-    bot.run(DISCORD_TOKEN, log_handler=None)
+            sys.exit(1)
+
+    bot.run(token, log_handler=None)
 
 
 if __name__ == "__main__":

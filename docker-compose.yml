@@ -1,5 +1,6 @@
 services:
   ptt-dc-bot:
+    image: ghcr.io/jasonxp516/ptt-dc-bot:latest
     build: .
     container_name: ptt-dc-bot
     restart: unless-stopped

@@ -1,0 +1,164 @@
+name: Release & Distribution Pipeline
+
+"on":
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release version tag (e.g. v1.0.0; leave blank to use fallback v0.0.0-dev)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  test:
+    name: Test & Lint Gate (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    env:
+      LOG_PATH: /tmp/test.log
+      DB_PATH: /tmp/test.db
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPYCACHEPREFIX: /tmp/pycache
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Shell script syntax check
+        run: |
+          bash -n install.sh start_mac.command start_bg.sh stop_bg.sh restart_bg.sh
+
+      - name: Python compile check
+        run: |
+          python -m py_compile setup_wizard.py bot.py storage.py embeds.py groq_agent.py groq_scheduler.py ptt_crawler.py delivery.py config.py
+
+      - name: Run offline test suite
+        run: |
+          python -m unittest discover tests
+
+  release-packages:
+    name: Package & Publish Releases
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve Release Tag / Version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            TAG_NAME="${{ inputs.release_tag }}"
+          else
+            TAG_NAME="v0.0.0-dev"
+          fi
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: ${TAG_NAME}"
+
+      - name: Build Platform Archives
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          mkdir -p dist staging_win staging_mac staging_linux
+
+          CORE_FILES=(bot.py config.py delivery.py embeds.py groq_agent.py groq_scheduler.py ptt_crawler.py setup_wizard.py storage.py requirements.txt .env.example README.md README_EN.md LICENSE)
+
+          # 1. Windows Archive (Zip)
+          for f in "${CORE_FILES[@]}"; do cp "$f" staging_win/; done
+          cp start_windows.bat install.ps1 staging_win/
+          (cd staging_win && zip -q -r "../dist/ptt-dc-bot-${VERSION}-windows.zip" .)
+
+          # 2. macOS Archive (tar.gz)
+          for f in "${CORE_FILES[@]}"; do cp "$f" staging_mac/; done
+          cp start_mac.command install.sh staging_mac/
+          chmod +x staging_mac/start_mac.command staging_mac/install.sh
+          tar -czf "dist/ptt-dc-bot-${VERSION}-macos.tar.gz" -C staging_mac .
+
+          # 3. Linux Archive (tar.gz)
+          for f in "${CORE_FILES[@]}"; do cp "$f" staging_linux/; done
+          cp install.sh start_bg.sh stop_bg.sh restart_bg.sh ptt-bot.service docker-compose.yml Dockerfile .dockerignore staging_linux/
+          chmod +x staging_linux/install.sh staging_linux/start_bg.sh staging_linux/stop_bg.sh staging_linux/restart_bg.sh
+          tar -czf "dist/ptt-dc-bot-${VERSION}-linux.tar.gz" -C staging_linux .
+
+          # Clean up staging directories
+          rm -rf staging_win staging_mac staging_linux
+
+          echo "Generated release archives in dist/:"
+          ls -lh dist/
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: |
+            dist/ptt-dc-bot-${{ steps.version.outputs.tag }}-windows.zip
+            dist/ptt-dc-bot-${{ steps.version.outputs.tag }}-macos.tar.gz
+            dist/ptt-dc-bot-${{ steps.version.outputs.tag }}-linux.tar.gz
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ startsWith(steps.version.outputs.tag, 'v0.0.0') || contains(steps.version.outputs.tag, '-dev') }}
+
+  docker-publish:
+    name: Build & Push Multi-Arch Docker Image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=ref,event=branch
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
