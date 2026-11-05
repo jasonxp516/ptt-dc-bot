@@ -1,0 +1,15 @@
+.env
+*.db
+*.db-*
+*.db.bak*
+*.log
+*.log.*
+tmux_console.log*
+venv/
+.venv/
+backups/
+data/
+__pycache__/
+.pytest_cache/
+.DS_Store
+IMPLEMENTATION_GUIDE.md

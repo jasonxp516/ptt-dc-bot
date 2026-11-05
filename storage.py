@@ -1,0 +1,1650 @@
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import sqlite3
+import threading
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+
+from config import (
+    AI_CACHE_TTL_SEC,
+    ALLOWED_CATEGORIES,
+    ARTICLE_CACHE_TTL_SEC,
+    DEDUPE_WINDOW_DAYS,
+    DEFAULT_GUILD_ID,
+    MAX_FUZZY_DESC_LEN,
+    MAX_GLOBAL_ACTIVE_BOARDS,
+    MAX_KEYWORD_LEN,
+    MEMORY_MAX_TURNS,
+    MEMORY_TTL_SEC,
+    OWNER_USER_ID,
+    TIER_QUOTAS,
+    sanitize_user_input,
+)
+
+
+def compute_dedupe_hash(board: str, author: str, title: str) -> str:
+    norm_title = re.sub(r"[\s\[\]/\-_、，,]+", "", title.lower())
+    raw = f"{board.lower()}:{author.lower()}:{norm_title}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
+# Model / capacity patterns that must NOT be mistaken for prices (Fix P1-3)
+_MODEL_STRIP_PATTERNS = re.compile(
+    r"(?:"
+    r"(?:rtx|gtx|rx|arc|uhd|hd|gt)\s*[-_]?\s*\d{3,4}\s*(?:ti|xt|xtx|super|gre|s|m)?"
+    r"|(?:i[3579]|r[3579]|ryzen\s*[3579]|ultra\s*[579])\s*[-_]?\s*\d{3,5}[a-z0-9]*"
+    r"|(?:[bzhx]\d{3}[a-z]?|x\d{3}e?|z\d{3}|h\d{3}|a\d{3})"
+    r"|ddr[345]\s*[-_]?\s*\d{3,4}"
+    r"|\b\d{1,4}\s*(?:gb|g|tb|t|mhz|mt/s|w|瓦|mm|hz|吋|寸)\b"
+    r"|\b[a-z]+[-_]\d{3,6}[a-z0-9]*\b"
+    r"|\b\d{3,6}[-_][a-z]+\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def extract_first_price_int(price_str: Optional[str]) -> Optional[int]:
+    """
+    Fix P1-3: Accurately parse the item price in TWD from a price string without confusing
+    hardware model numbers (e.g. 'RTX 3060 12G 售 5800', 'i5-12400 + 3060Ti 共 15000', '5.8k')
+    for prices!
+    """
+    if not price_str:
+        return None
+
+    s = price_str.replace(",", "").replace("，", "")
+    # 1. Strip hardware model tokens so 'RTX 3060' or 'i5-12400' cannot be matched as price
+    cleaned = _MODEL_STRIP_PATTERNS.sub(" ", s)
+
+    # 2. Check for explicit 'k' / 'K' price shorthand (e.g. '5.8k', '6k')
+    m_k = re.search(r"(?<![A-Za-z0-9])(\d{1,2}(?:\.\d{1,2})?)\s*[kK](?![A-Za-z0-9])", cleaned)
+    if m_k:
+        try:
+            val_k = int(round(float(m_k.group(1)) * 1000))
+            if 100 <= val_k <= 500000:
+                return val_k
+        except ValueError:
+            pass
+
+    # 3. Prioritize numbers immediately preceded or followed by currency / price markers
+    m_curr = re.search(
+        r"(?:(?:\$|NT\$?|TWD\$?|售價|價格|欲售|售|賣|共|只要)\s*[:：]?\s*(\d{3,6})\b"
+        r"|\b(\d{3,6})\s*(?:元|塊|NTD|TWD))",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m_curr:
+        num_str = m_curr.group(1) or m_curr.group(2)
+        try:
+            val = int(num_str)
+            if 100 <= val <= 500000:
+                return val
+        except ValueError:
+            pass
+
+    # 4. Prioritize numbers after a colon (e.g., '2. RTX 3060TI: 5800')
+    m_colon = re.search(r"[:：]\s*(\d{3,6})(?![A-Za-z0-9])", cleaned)
+    if m_colon:
+        try:
+            val = int(m_colon.group(1))
+            if 100 <= val <= 500000:
+                return val
+        except ValueError:
+            pass
+
+    # 5. Fallback: find standalone 3~6 digit numbers not adjacent to letters or hyphens
+    candidates = []
+    for m in re.finditer(r"(?<![A-Za-z0-9\-_])(\d{3,6})(?![A-Za-z0-9\-_])", cleaned):
+        try:
+            val = int(m.group(1))
+            if 100 <= val <= 500000:
+                candidates.append(val)
+        except ValueError:
+            pass
+
+    if candidates:
+        return candidates[-1]
+    return None
+
+
+def is_title_marked_sold(title: str) -> bool:
+    """
+    Fix P1-4: Detect sold/closed markers in article titles, including:
+    - '[賣/雙北/皆可] 售出 ASUS RTX3060Ti' (bare '售出' right after category bracket)
+    - '[賣/台中/皆可] （售出）微星 RX 6700 XT' (parenthesized '售出')
+    - '[賣/桃園/皆可] EVGA RTX 3060Ti FTW3 售出' (trailing '售出')
+    - Unambiguous strong sold markers (excluding '暫定' which means 'tentative price/location')
+    """
+    if not title:
+        return False
+    t = title.strip()
+    if re.search(
+        r"(已售出|已賣出|售出\s*感謝|全售出|皆售出|皆已售出|已全部售出|已售|"
+        r"暫售|停售|撤售|已結標|結標|取消販售|已交換|已徵得|"
+        r"已洽談|洽談中|洽中|已預定|已預訂|預定中|預訂中|"
+        r"不用再來信|不用來信|暫勿來信|請勿來信|勿來信|停止來信|暫不回信|恕不一一回信)",
+        t,
+        re.IGNORECASE,
+    ):
+        return True
+    # Bare '售出' / '賣出' inside parentheses/brackets, right after '[賣/...]', or at the end of title
+    if re.search(
+        r"(?:[（(\[【]\s*(?:售出|賣出|已售)\s*[）)\]】]"
+        r"|^\s*(?:Re:\s*|Fw:\s*)?\[[^\]]+\]\s*(?:售出|賣出)\b"
+        r"|(?:^|\s)(?:售出|賣出)\s*$)",
+        t,
+        re.IGNORECASE,
+    ):
+        return True
+    return False
+
+
+class BotStorage:
+    """
+    Thread-safe, multi-tenant SQLite storage with WAL mode, persistent connection,
+    article/AI caching, quota tracking, conversation memory, and delivery deduplication.
+    """
+
+    def __init__(
+        self,
+        db_path: str,
+        default_channel_id: str = "",
+        default_board: str = "HardwareSale",
+        default_guild_id: str = DEFAULT_GUILD_ID,
+    ):
+        self.db_path = db_path
+        self.default_channel_id = str(default_channel_id or "")
+        self.default_board = default_board
+        self.default_guild_id = str(default_guild_id or "000000000000000000")
+        self._lock = threading.RLock()
+        self._conn = self._open_connection()
+        self._init_and_migrate_db()
+
+    def _open_connection(self) -> sqlite3.Connection:
+        db_dir = os.path.dirname(os.path.abspath(self.db_path))
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        conn.execute("PRAGMA foreign_keys=ON;")
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            if self._conn:
+                try:
+                    self._conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+
+    def _init_and_migrate_db(self) -> None:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            row = cur.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()
+            schema_ver = int(row["value"]) if row and row["value"].isdigit() else 1
+
+            has_subs = (
+                cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='subscribers'"
+                ).fetchone()
+                is not None
+            )
+
+            if schema_ver < 2 or not has_subs:
+                if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
+                    bak_path = f"{self.db_path}.bak"
+                    try:
+                        shutil.copy2(self.db_path, bak_path)
+                    except Exception:
+                        pass
+                self._run_schema_v2_migration(cur)
+                self._conn.commit()
+                schema_ver = 2
+
+            if schema_ver < 3:
+                if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
+                    bak_v2 = f"{self.db_path}.bak.v2"
+                    if not os.path.exists(bak_v2):
+                        try:
+                            shutil.copy2(self.db_path, bak_v2)
+                        except Exception:
+                            pass
+                self._run_schema_v3_migration(cur)
+                self._conn.commit()
+
+    def _run_schema_v2_migration(self, cur: sqlite3.Cursor) -> None:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 1. Subscribers table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS subscribers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL CHECK(scope IN ('user', 'guild')),
+                discord_id TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                push_channel_id TEXT,
+                push_mode TEXT NOT NULL DEFAULT 'keyword',
+                tier TEXT NOT NULL DEFAULT 'free',
+                enabled INTEGER NOT NULL DEFAULT 1,
+                dm_failed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                UNIQUE(scope, discord_id)
+            )
+            """
+        )
+
+        legacy_ch = self.default_channel_id
+        legacy_mode = "keyword"
+        r_ch = cur.execute("SELECT value FROM settings WHERE key = 'push_channel_id'").fetchone()
+        if r_ch and r_ch["value"]:
+            legacy_ch = r_ch["value"]
+        r_md = cur.execute("SELECT value FROM settings WHERE key = 'push_mode'").fetchone()
+        if r_md and r_md["value"]:
+            legacy_mode = r_md["value"]
+
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO subscribers
+                (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, created_at)
+            VALUES ('guild', ?, '預設伺服器', ?, ?, 'owner', 1, ?)
+            """,
+            (self.default_guild_id, legacy_ch, legacy_mode, now_str),
+        )
+        default_sub_row = cur.execute(
+            "SELECT id FROM subscribers WHERE scope = 'guild' AND discord_id = ?",
+            (self.default_guild_id,),
+        ).fetchone()
+        default_sub_id = default_sub_row["id"] if default_sub_row else 1
+
+        # 2. Boards table
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS boards (
+                name TEXT PRIMARY KEY COLLATE NOCASE,
+                added_at TEXT NOT NULL,
+                initialized INTEGER DEFAULT 0,
+                last_checked TEXT DEFAULT '尚未檢查',
+                last_status TEXT DEFAULT '等待中',
+                last_scanned_at INTEGER DEFAULT 0,
+                consecutive_failures INTEGER DEFAULT 0
+            )
+            """
+        )
+        existing_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(boards)").fetchall()
+        }
+        if "last_scanned_at" not in existing_cols:
+            cur.execute("ALTER TABLE boards ADD COLUMN last_scanned_at INTEGER DEFAULT 0")
+        if "consecutive_failures" not in existing_cols:
+            cur.execute("ALTER TABLE boards ADD COLUMN consecutive_failures INTEGER DEFAULT 0")
+
+        b_cnt = cur.execute("SELECT COUNT(*) as cnt FROM boards").fetchone()
+        if b_cnt and b_cnt["cnt"] == 0 and self.default_board:
+            cur.execute(
+                "INSERT OR IGNORE INTO boards (name, added_at, initialized, last_scanned_at) VALUES (?, ?, 0, 0)",
+                (self.default_board, now_str),
+            )
+
+        # 3. Migrate or create keywords table
+        kw_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(keywords)").fetchall()
+        }
+        if not kw_cols:
+            cur.execute(
+                """
+                CREATE TABLE keywords (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscriber_id INTEGER NOT NULL DEFAULT 1 REFERENCES subscribers(id) ON DELETE CASCADE,
+                    keyword TEXT NOT NULL COLLATE NOCASE,
+                    board TEXT NOT NULL DEFAULT 'HardwareSale' COLLATE NOCASE,
+                    category TEXT NOT NULL DEFAULT '賣' COLLATE NOCASE,
+                    max_price INTEGER DEFAULT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(subscriber_id, keyword, board, category)
+                )
+                """
+            )
+        elif "subscriber_id" not in kw_cols:
+            cur.execute(
+                """
+                CREATE TABLE keywords_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscriber_id INTEGER NOT NULL DEFAULT 1 REFERENCES subscribers(id) ON DELETE CASCADE,
+                    keyword TEXT NOT NULL COLLATE NOCASE,
+                    board TEXT NOT NULL DEFAULT 'HardwareSale' COLLATE NOCASE,
+                    category TEXT NOT NULL DEFAULT '賣' COLLATE NOCASE,
+                    max_price INTEGER DEFAULT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(subscriber_id, keyword, board, category)
+                )
+                """
+            )
+            old_kws = cur.execute("SELECT id, keyword, board, category, created_at FROM keywords").fetchall()
+            for okw in old_kws:
+                b_val = self.default_board if okw["board"].upper() == "ALL" else okw["board"]
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO keywords_new (id, subscriber_id, keyword, board, category, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (okw["id"], default_sub_id, okw["keyword"], b_val, okw["category"], okw["created_at"]),
+                )
+            cur.execute("DROP TABLE keywords")
+            cur.execute("ALTER TABLE keywords_new RENAME TO keywords")
+
+        # 4. Migrate or create fuzzy_rules table
+        fz_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(fuzzy_rules)").fetchall()
+        }
+        if not fz_cols:
+            cur.execute(
+                """
+                CREATE TABLE fuzzy_rules (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscriber_id INTEGER NOT NULL DEFAULT 1 REFERENCES subscribers(id) ON DELETE CASCADE,
+                    description TEXT NOT NULL,
+                    board TEXT NOT NULL DEFAULT 'HardwareSale' COLLATE NOCASE,
+                    category TEXT NOT NULL DEFAULT '賣' COLLATE NOCASE,
+                    hint_keywords TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+        elif "subscriber_id" not in fz_cols:
+            cur.execute("ALTER TABLE fuzzy_rules ADD COLUMN subscriber_id INTEGER NOT NULL DEFAULT 1")
+
+        # 5. Seen articles
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seen_articles (
+                url TEXT PRIMARY KEY,
+                board TEXT NOT NULL COLLATE NOCASE,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                date_str TEXT NOT NULL,
+                seen_at INTEGER NOT NULL
+            )
+            """
+        )
+
+        # 6. Article detail cache & AI cache
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_cache (
+                url TEXT PRIMARY KEY,
+                detail_json TEXT NOT NULL,
+                fetched_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS article_ai_cache (
+                url TEXT NOT NULL,
+                check_key TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                model TEXT,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY(url, check_key)
+            )
+            """
+        )
+
+        # 7. Deliveries, Usage Counters, Conversation Memory, Blacklist
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deliveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+                article_url TEXT NOT NULL,
+                board TEXT NOT NULL DEFAULT 'HardwareSale',
+                title TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                dedupe_hash TEXT NOT NULL,
+                channel_id TEXT,
+                message_id TEXT,
+                delivered_at INTEGER NOT NULL,
+                sold_marked INTEGER NOT NULL DEFAULT 0,
+                last_sold_check_at INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(subscriber_id, article_url)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usage_counters (
+                subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+                day TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(subscriber_id, day, kind)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS conversation_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blacklist (
+                discord_id TEXT PRIMARY KEY,
+                reason TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+
+        cur.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('push_channel_id', ?)",
+            (legacy_ch,),
+        )
+        cur.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('push_mode', ?)",
+            (legacy_mode,),
+        )
+        cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('startup_notified', '1')")
+        cur.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('total_pushed', '0')")
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = '2'"
+        )
+
+    def _run_schema_v3_migration(self, cur: sqlite3.Cursor) -> None:
+        """
+        Schema v3 Migration:
+        - Add `last_sold_check_at` to `deliveries` table so sold-out follow-up checks rotate fairly (Fix P1-5).
+        """
+        deliv_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(deliveries)").fetchall()
+        }
+        if "last_sold_check_at" not in deliv_cols:
+            cur.execute(
+                "ALTER TABLE deliveries ADD COLUMN last_sold_check_at INTEGER NOT NULL DEFAULT 0"
+            )
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '3') "
+            "ON CONFLICT(key) DO UPDATE SET value = '3'"
+        )
+
+    # =====================================================================
+    # Global Settings & Blacklist
+    # =====================================================================
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, str(value)),
+            )
+            self._conn.commit()
+
+    def increment_pushed_count(self, count: int = 1) -> int:
+        with self._lock:
+            current = int(self.get_setting("total_pushed", "0") or "0")
+            new_val = current + count
+            self.set_setting("total_pushed", str(new_val))
+            return new_val
+
+    def is_blacklisted(self, discord_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM blacklist WHERE discord_id = ?", (str(discord_id),)
+            ).fetchone()
+            return row is not None
+
+    def set_blacklist(self, discord_id: str, reason: str = "違反使用規範") -> None:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO blacklist (discord_id, reason, created_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(discord_id) DO UPDATE SET reason = excluded.reason",
+                (str(discord_id), reason, now_str),
+            )
+            self._conn.commit()
+
+    def remove_blacklist(self, discord_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM blacklist WHERE discord_id = ?", (str(discord_id),))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def get_blacklist(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM blacklist ORDER BY created_at DESC").fetchall()
+            return [dict(r) for r in rows]
+
+    # =====================================================================
+    # Subscribers (Multi-Tenant Scope: 'user' or 'guild')
+    # =====================================================================
+    def get_default_guild_subscriber(self) -> Dict[str, Any]:
+        return self.get_or_create_subscriber("guild", self.default_guild_id, "預設伺服器")
+
+    def get_subscriber(self, scope: str, discord_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fix P2-3: Read-only lookup of a subscriber without creating a database row.
+        Used by autocomplete handlers so typing doesn't create phantom subscribers.
+        """
+        scope = "user" if scope == "user" else "guild"
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
+                (scope, str(discord_id)),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_or_create_subscriber_with_flag(
+        self,
+        scope: str,
+        discord_id: str,
+        display_name: str = "",
+        default_push_channel_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], bool]:
+        """
+        Returns (subscriber_dict, is_newly_created).
+        """
+        scope = "user" if scope == "user" else "guild"
+        discord_id = str(discord_id)
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
+                (scope, discord_id),
+            ).fetchone()
+            if row:
+                if display_name and row["display_name"] != display_name:
+                    self._conn.execute(
+                        "UPDATE subscribers SET display_name = ? WHERE id = ?",
+                        (display_name[:60], row["id"]),
+                    )
+                    self._conn.commit()
+                return dict(row), False
+
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tier = "free"
+            if (scope == "guild" and discord_id == self.default_guild_id) or (
+                OWNER_USER_ID and discord_id == OWNER_USER_ID
+            ):
+                tier = "owner"
+            elif scope == "user":
+                tier = "friend"
+
+            push_ch = default_push_channel_id
+            if scope == "guild" and discord_id == self.default_guild_id and not push_ch:
+                push_ch = self.default_channel_id
+
+            cur = self._conn.execute(
+                """
+                INSERT INTO subscribers
+                    (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, dm_failed, created_at)
+                VALUES (?, ?, ?, ?, 'keyword', ?, 1, 0, ?)
+                """,
+                (scope, discord_id, display_name[:60], push_ch, tier, now_str),
+            )
+            self._conn.commit()
+            sub_id = cur.lastrowid
+            row = self._conn.execute("SELECT * FROM subscribers WHERE id = ?", (sub_id,)).fetchone()
+            return dict(row), True
+
+    def get_or_create_subscriber(
+        self,
+        scope: str,
+        discord_id: str,
+        display_name: str = "",
+        default_push_channel_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        sub, _ = self.get_or_create_subscriber_with_flag(
+            scope, discord_id, display_name, default_push_channel_id
+        )
+        return sub
+
+    def get_subscriber_by_id(self, subscriber_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM subscribers WHERE id = ?", (subscriber_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_all_enabled_subscribers(self) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM subscribers WHERE enabled = 1 ORDER BY id ASC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def set_subscriber_enabled(self, subscriber_id: int, enabled: bool) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE subscribers SET enabled = ? WHERE id = ?",
+                (1 if enabled else 0, subscriber_id),
+            )
+            self._conn.commit()
+
+    def update_subscriber_channel(
+        self, subscriber_id: int, channel_id: Optional[str], reset_dm_failed: bool = True
+    ) -> None:
+        with self._lock:
+            if reset_dm_failed:
+                self._conn.execute(
+                    "UPDATE subscribers SET push_channel_id = ?, dm_failed = 0, enabled = 1 WHERE id = ?",
+                    (str(channel_id) if channel_id else None, subscriber_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE subscribers SET push_channel_id = ? WHERE id = ?",
+                    (str(channel_id) if channel_id else None, subscriber_id),
+                )
+            if subscriber_id == 1 and channel_id:
+                self.set_setting("push_channel_id", str(channel_id))
+            self._conn.commit()
+
+    def update_subscriber_mode(self, subscriber_id: int, mode: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE subscribers SET push_mode = ? WHERE id = ?",
+                (mode, subscriber_id),
+            )
+            if subscriber_id == 1:
+                self.set_setting("push_mode", mode)
+            self._conn.commit()
+
+    def mark_subscriber_dm_failed(self, subscriber_id: int, failed: bool = True) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE subscribers SET dm_failed = ? WHERE id = ?",
+                (1 if failed else 0, subscriber_id),
+            )
+            self._conn.commit()
+
+    def set_subscriber_tier(self, scope: str, discord_id: str, tier: str) -> bool:
+        if tier not in TIER_QUOTAS:
+            return False
+        sub = self.get_or_create_subscriber(scope, str(discord_id))
+        with self._lock:
+            self._conn.execute(
+                "UPDATE subscribers SET tier = ? WHERE id = ?", (tier, sub["id"])
+            )
+            self._conn.commit()
+            return True
+
+    def forget_subscriber(self, scope: str, discord_id: str) -> bool:
+        """
+        Fix P2-6: Explicitly delete all dependent rows (including legacy tables without FK cascade)
+        and scoped conversation memory when forgetting a subscriber.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id FROM subscribers WHERE scope = ? AND discord_id = ?",
+                (scope, str(discord_id)),
+            ).fetchone()
+            if not row:
+                return False
+            sub_id = row["id"]
+            self._conn.execute("DELETE FROM keywords WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute("DELETE FROM fuzzy_rules WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute("DELETE FROM deliveries WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute("DELETE FROM usage_counters WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute("DELETE FROM subscribers WHERE id = ?", (sub_id,))
+            if scope == "user":
+                self._conn.execute(
+                    "DELETE FROM conversation_memory WHERE user_id = ? OR user_id LIKE ?",
+                    (str(discord_id), f"{discord_id}:%"),
+                )
+            self._conn.commit()
+            return True
+
+    def get_push_channel_id(self, subscriber_id: int = 1) -> Optional[int]:
+        sub = self.get_subscriber_by_id(subscriber_id)
+        val = sub["push_channel_id"] if sub else self.get_setting("push_channel_id", self.default_channel_id)
+        try:
+            return int(val) if val else None
+        except ValueError:
+            return None
+
+    def set_push_channel_id(self, channel_id: int, subscriber_id: int = 1) -> None:
+        self.update_subscriber_channel(subscriber_id, str(channel_id))
+
+    def get_push_mode(self, subscriber_id: int = 1) -> str:
+        sub = self.get_subscriber_by_id(subscriber_id)
+        return (sub["push_mode"] if sub else self.get_setting("push_mode", "keyword")) or "keyword"
+
+    def set_push_mode(self, mode: str, subscriber_id: int = 1) -> None:
+        self.update_subscriber_mode(subscriber_id, mode)
+
+    # =====================================================================
+    # Quotas & Daily Usage Counters
+    # =====================================================================
+    def get_subscriber_quota(self, subscriber_id: int) -> Dict[str, int]:
+        sub = self.get_subscriber_by_id(subscriber_id)
+        if not sub:
+            return TIER_QUOTAS["free"]
+        # If OWNER_USER_ID is set and matches this user subscriber, always grant owner quota
+        if OWNER_USER_ID and sub.get("scope") == "user" and str(sub.get("discord_id")) == str(OWNER_USER_ID):
+            return TIER_QUOTAS["owner"]
+        tier = sub.get("tier", "free")
+        return TIER_QUOTAS.get(tier, TIER_QUOTAS["free"])
+
+    def get_daily_usage(self, subscriber_id: int, kind: str) -> int:
+        day_str = datetime.now().strftime("%Y-%m-%d")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT count FROM usage_counters WHERE subscriber_id = ? AND day = ? AND kind = ?",
+                (subscriber_id, day_str, kind),
+            ).fetchone()
+            return int(row["count"]) if row else 0
+
+    def check_and_increment_usage(self, subscriber_id: int, kind: str) -> Tuple[bool, int, int]:
+        quota = self.get_subscriber_quota(subscriber_id)
+        limit_key = "daily_ai_chats" if kind == "ai_chat" else "daily_scans"
+        limit = quota.get(limit_key, 20)
+        day_str = datetime.now().strftime("%Y-%m-%d")
+
+        with self._lock:
+            current = self.get_daily_usage(subscriber_id, kind)
+            if current >= limit:
+                return False, current, limit
+            self._conn.execute(
+                """
+                INSERT INTO usage_counters (subscriber_id, day, kind, count)
+                VALUES (?, ?, ?, 1)
+                ON CONFLICT(subscriber_id, day, kind) DO UPDATE SET count = count + 1
+                """,
+                (subscriber_id, day_str, kind),
+            )
+            self._conn.commit()
+            return True, current + 1, limit
+
+    def get_subscriber_distinct_boards(self, subscriber_id: int) -> List[str]:
+        with self._lock:
+            rows_kw = self._conn.execute(
+                "SELECT DISTINCT lower(board) as b FROM keywords WHERE subscriber_id = ?",
+                (subscriber_id,),
+            ).fetchall()
+            rows_fz = self._conn.execute(
+                "SELECT DISTINCT lower(board) as b FROM fuzzy_rules WHERE subscriber_id = ?",
+                (subscriber_id,),
+            ).fetchall()
+            return sorted({r["b"] for r in rows_kw} | {r["b"] for r in rows_fz})
+
+    # =====================================================================
+    # Boards (Global Poll Registry + Fix P0-1 & P0-4)
+    # =====================================================================
+    def get_boards(self) -> List[Dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, added_at, initialized, last_checked, last_status, last_scanned_at, consecutive_failures "
+                "FROM boards ORDER BY added_at ASC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def is_board_tracked(self, board_name: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM boards WHERE name = ? COLLATE NOCASE", (board_name,)
+            ).fetchone()
+            return row is not None
+
+    def has_active_rules_for_board(self, board_name: str) -> bool:
+        with self._lock:
+            r_all = self._conn.execute(
+                "SELECT 1 FROM subscribers WHERE enabled = 1 AND push_mode = 'all' LIMIT 1"
+            ).fetchone()
+            if r_all:
+                return True
+            r_kw = self._conn.execute(
+                """
+                SELECT 1 FROM keywords k
+                JOIN subscribers s ON k.subscriber_id = s.id
+                WHERE s.enabled = 1 AND (k.board = 'ALL' OR k.board = ? COLLATE NOCASE)
+                LIMIT 1
+                """,
+                (board_name,),
+            ).fetchone()
+            if r_kw:
+                return True
+            r_fz = self._conn.execute(
+                """
+                SELECT 1 FROM fuzzy_rules f
+                JOIN subscribers s ON f.subscriber_id = s.id
+                WHERE s.enabled = 1 AND (f.board = 'ALL' OR f.board = ? COLLATE NOCASE)
+                LIMIT 1
+                """,
+                (board_name,),
+            ).fetchone()
+            return r_fz is not None
+
+    def should_reinit_board(self, board_info: Dict) -> bool:
+        """
+        Fix P0-1: ONLY rebuild baseline when `initialized == 0` (which happens on newly added boards
+        or boards explicitly reset via `reset_baseline=True` when they had 0 active rules).
+        Never reset baseline after a transient PTT timeout or cooldown!
+        """
+        return not bool(board_info.get("initialized"))
+
+    def add_board(self, board_name: str) -> bool:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT name FROM boards WHERE name = ? COLLATE NOCASE", (board_name,)
+            ).fetchone()
+            if existing:
+                return False
+            total_boards = self._conn.execute("SELECT COUNT(*) as c FROM boards").fetchone()["c"]
+            if total_boards >= MAX_GLOBAL_ACTIVE_BOARDS:
+                return False
+            self._conn.execute(
+                "INSERT INTO boards (name, added_at, initialized, last_scanned_at) VALUES (?, ?, 0, 0)",
+                (board_name, now_str),
+            )
+            self._conn.commit()
+            return True
+
+    def remove_board(self, board_name: str) -> Optional[str]:
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT name FROM boards WHERE name = ? COLLATE NOCASE", (board_name,)
+            ).fetchone()
+            if not existing:
+                return None
+            actual_name = existing["name"]
+            self._conn.execute("DELETE FROM boards WHERE name = ? COLLATE NOCASE", (actual_name,))
+            self._conn.commit()
+            return actual_name
+
+    def update_board_status(
+        self,
+        board_name: str,
+        initialized: bool,
+        status: str,
+        scanned_now: bool = True,
+        reset_baseline: bool = False,
+        is_error: bool = False,
+    ) -> int:
+        """
+        Fix P0-1:
+        - `scanned_now=True`: Successful scan. Sets `initialized = 1`, `last_scanned_at = now`, `consecutive_failures = 0`.
+        - `reset_baseline=True`: Board skipped because no subscriber has active rules. Sets `initialized = 0` so next activation baselines cleanly.
+        - `is_error=True`: PTT fetch error/timeout. Increments `consecutive_failures` and preserves `initialized` & `last_scanned_at`!
+        - Otherwise (e.g. cooldown): Updates `last_checked` and `last_status` while preserving `initialized`.
+        Returns current `consecutive_failures` count.
+        """
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_ts = int(time.time())
+        with self._lock:
+            if scanned_now:
+                self._conn.execute(
+                    """
+                    UPDATE boards
+                    SET initialized = ?, last_checked = ?, last_status = ?, last_scanned_at = ?, consecutive_failures = 0
+                    WHERE name = ? COLLATE NOCASE
+                    """,
+                    (1 if initialized else 0, now_str, status, now_ts, board_name),
+                )
+                self._conn.commit()
+                return 0
+            elif reset_baseline:
+                self._conn.execute(
+                    """
+                    UPDATE boards
+                    SET initialized = 0, last_checked = ?, last_status = ?
+                    WHERE name = ? COLLATE NOCASE
+                    """,
+                    (now_str, status, board_name),
+                )
+                self._conn.commit()
+                return 0
+            elif is_error:
+                self._conn.execute(
+                    """
+                    UPDATE boards
+                    SET last_checked = ?, last_status = ?, consecutive_failures = consecutive_failures + 1
+                    WHERE name = ? COLLATE NOCASE
+                    """,
+                    (now_str, status, board_name),
+                )
+                self._conn.commit()
+                row = self._conn.execute(
+                    "SELECT consecutive_failures FROM boards WHERE name = ? COLLATE NOCASE",
+                    (board_name,),
+                ).fetchone()
+                return int(row["consecutive_failures"]) if row else 1
+            else:
+                self._conn.execute(
+                    """
+                    UPDATE boards
+                    SET last_checked = ?, last_status = ?
+                    WHERE name = ? COLLATE NOCASE
+                    """,
+                    (now_str, status, board_name),
+                )
+                self._conn.commit()
+                row = self._conn.execute(
+                    "SELECT consecutive_failures FROM boards WHERE name = ? COLLATE NOCASE",
+                    (board_name,),
+                ).fetchone()
+                return int(row["consecutive_failures"]) if row else 0
+
+    # =====================================================================
+    # Exact Keywords (with subscriber_id, -exclusion tokens, max_price & P0-4)
+    # =====================================================================
+    def get_keywords(
+        self, board: Optional[str] = None, subscriber_id: Optional[int] = None
+    ) -> List[Dict]:
+        with self._lock:
+            query = (
+                "SELECT k.id, k.subscriber_id, k.keyword, k.board, k.category, k.max_price, k.created_at "
+                "FROM keywords k JOIN subscribers s ON k.subscriber_id = s.id WHERE s.enabled = 1"
+            )
+            params: List[Any] = []
+            if subscriber_id is not None:
+                query = (
+                    "SELECT k.id, k.subscriber_id, k.keyword, k.board, k.category, k.max_price, k.created_at "
+                    "FROM keywords k WHERE k.subscriber_id = ?"
+                )
+                params.append(subscriber_id)
+            if board:
+                query += " AND (k.board = 'ALL' OR k.board = ? COLLATE NOCASE)"
+                params.append(board)
+            query += " ORDER BY k.id ASC"
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_keyword(
+        self,
+        keyword: str,
+        board: str = "HardwareSale",
+        category: str = "賣",
+        subscriber_id: int = 1,
+        max_price: Optional[int] = None,
+    ) -> Tuple[bool, str]:
+        keyword = sanitize_user_input(keyword, max_len=MAX_KEYWORD_LEN)
+        board = sanitize_user_input(board, max_len=30) or "HardwareSale"
+        category = sanitize_user_input(category, max_len=10) or "賣"
+        if category.upper() not in ALLOWED_CATEGORIES and category not in ALLOWED_CATEGORIES:
+            category = "賣"
+        if not keyword:
+            return False, "關鍵字不可為空（且不可包含 @提及 標籤）"
+
+        quota = self.get_subscriber_quota(subscriber_id)
+        existing_kws = self.get_keywords(subscriber_id=subscriber_id)
+        if len(existing_kws) >= quota["max_keywords"]:
+            return False, f"已達您的精確關鍵字數量上限（最多 `{quota['max_keywords']}` 組）！"
+
+        # Fix P0-4: Enforce per-subscriber max_boards & global board limit
+        if board.upper() != "ALL":
+            sub_boards = self.get_subscriber_distinct_boards(subscriber_id)
+            if board.lower() not in sub_boards and len(sub_boards) >= quota["max_boards"]:
+                return (
+                    False,
+                    f"已達您可追蹤的不同看板數量上限（最多 `{quota['max_boards']}` 個看板）！",
+                )
+            if not self.is_board_tracked(board):
+                if not self.add_board(board):
+                    return (
+                        False,
+                        f"系統全域盯梢看板名額已滿（上限 `{MAX_GLOBAL_ACTIVE_BOARDS}` 個），無法新增看板 `{board}`！",
+                    )
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO keywords (subscriber_id, keyword, board, category, max_price, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (subscriber_id, keyword, board, category, max_price, now_str),
+                )
+                self._conn.commit()
+                price_note = f", 預算上限: `{max_price}元`" if max_price else ""
+                return True, f"已新增精確關鍵字 `{keyword}` (目標看板: `{board}`, 分類: `{category}`{price_note})"
+            except sqlite3.IntegrityError:
+                if max_price is not None:
+                    self._conn.execute(
+                        """
+                        UPDATE keywords SET max_price = ?
+                        WHERE subscriber_id = ? AND keyword = ? COLLATE NOCASE AND board = ? COLLATE NOCASE AND category = ? COLLATE NOCASE
+                        """,
+                        (max_price, subscriber_id, keyword, board, category),
+                    )
+                    self._conn.commit()
+                    return True, f"已更新關鍵字 `{keyword}` 的預算上限為 `{max_price}元`！"
+                return False, f"關鍵字 `{keyword}` (看板: `{board}`, 分類: `{category}`) 已經存在！"
+
+    def update_keyword(
+        self,
+        identifier: str,
+        subscriber_id: int,
+        new_keyword: Optional[str] = None,
+        max_price: Optional[int] = -1,
+        new_max_price: Optional[int] = -1,
+        clear_max_price: bool = False,
+    ) -> Tuple[bool, str]:
+        """
+        P3-5: Edit an existing keyword's text or max_price without deleting and recreating.
+        Pass `max_price=None` (or `clear_max_price=True`) to clear budget limit, or `max_price=-1` to keep existing max_price.
+        """
+        identifier = str(identifier).strip().lstrip("#")
+        with self._lock:
+            row = None
+            if identifier.isdigit():
+                row = self._conn.execute(
+                    "SELECT * FROM keywords WHERE id = ? AND subscriber_id = ?",
+                    (int(identifier), subscriber_id),
+                ).fetchone()
+            if not row:
+                row = self._conn.execute(
+                    "SELECT * FROM keywords WHERE keyword = ? COLLATE NOCASE AND subscriber_id = ?",
+                    (identifier, subscriber_id),
+                ).fetchone()
+            if not row:
+                return False, f"找不到關鍵字或編號 `{identifier}`"
+
+            kw_val = sanitize_user_input(new_keyword, max_len=MAX_KEYWORD_LEN) if new_keyword else row["keyword"]
+            if clear_max_price:
+                price_val = None
+            elif new_max_price != -1 and new_max_price is not None:
+                price_val = new_max_price
+            elif max_price != -1:
+                price_val = max_price
+            else:
+                price_val = row["max_price"]
+            self._conn.execute(
+                "UPDATE keywords SET keyword = ?, max_price = ? WHERE id = ?",
+                (kw_val, price_val, row["id"]),
+            )
+            self._conn.commit()
+            p_str = f"≤${price_val}" if price_val else "不限預算"
+            return True, f"已更新關鍵字 `#{row['id']}` 為 `{kw_val}` ({p_str})"
+
+    def remove_keyword(
+        self, identifier: str, subscriber_id: int
+    ) -> Optional[Dict]:
+        """
+        V-05: Enforce strict multi-tenant isolation.
+        Requires valid subscriber_id to prevent cross-tenant rule deletion.
+        """
+        if subscriber_id is None or not isinstance(subscriber_id, int):
+            return None
+        identifier = str(identifier).strip().lstrip("#")
+        with self._lock:
+            row = None
+            if identifier.isdigit():
+                row = self._conn.execute(
+                    "SELECT * FROM keywords WHERE id = ? AND subscriber_id = ?",
+                    (int(identifier), subscriber_id),
+                ).fetchone()
+            if not row:
+                row = self._conn.execute(
+                    "SELECT * FROM keywords WHERE keyword = ? COLLATE NOCASE AND subscriber_id = ?",
+                    (identifier, subscriber_id),
+                ).fetchone()
+            if not row:
+                return None
+            removed = dict(row)
+            self._conn.execute("DELETE FROM keywords WHERE id = ?", (removed["id"],))
+            self._conn.commit()
+            return removed
+
+    def clear_keywords(self, subscriber_id: int = 1) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM keywords WHERE subscriber_id = ?", (subscriber_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    @staticmethod
+    def _token_matches_title(token: str, title_lower: str, title_compact: str) -> bool:
+        if token.isdigit():
+            return bool(re.search(rf"(?<!\d){re.escape(token)}(?!\d)", title_lower))
+        return (token in title_lower) or (token in title_compact)
+
+    def match_article_keywords_detailed(
+        self,
+        board: str,
+        title: str,
+        subscriber_id: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        keywords = self.get_keywords(board=board, subscriber_id=subscriber_id)
+        if not keywords:
+            return []
+
+        title_lower = title.lower()
+        title_compact = re.sub(r"[\s\-_]+", "", title_lower)
+        bracket_match = re.match(r"^\s*(?:Re:\s*|Fw:\s*)?\[([^\]]+)\]", title, re.IGNORECASE)
+        bracket_content = bracket_match.group(1).lower() if bracket_match else ""
+        if not bracket_content and ("賣/" in title or "售/" in title):
+            bracket_content = "賣"
+
+        # Fix P1-4: Use unified is_title_marked_sold
+        title_strong_sold = is_title_marked_sold(title)
+
+        matched_details = []
+        for kw in keywords:
+            cat_filter = kw["category"].upper()
+            if cat_filter != "ALL":
+                if kw["category"].lower() not in bracket_content:
+                    continue
+                if kw["category"] in ("賣", "售") and title_strong_sold:
+                    continue
+
+            raw_tokens = [t for t in kw["keyword"].lower().split() if t]
+            pos_tokens = [t for t in raw_tokens if not t.startswith("-")]
+            neg_tokens = [t[1:] for t in raw_tokens if t.startswith("-") and len(t) > 1]
+
+            if not pos_tokens:
+                continue
+
+            if any(self._token_matches_title(nt, title_lower, title_compact) for nt in neg_tokens):
+                continue
+
+            if all(self._token_matches_title(pt, title_lower, title_compact) for pt in pos_tokens):
+                label = kw["keyword"]
+                if kw["category"].upper() != "ALL":
+                    label = f"[{kw['category']}] {label}"
+                if kw.get("max_price"):
+                    label = f"{label} (≤${kw['max_price']})"
+                matched_details.append(
+                    {
+                        "id": kw["id"],
+                        "subscriber_id": kw["subscriber_id"],
+                        "keyword": kw["keyword"],
+                        "primary_token": pos_tokens[-1],
+                        "pos_query": " ".join(pos_tokens),
+                        "max_price": kw.get("max_price"),
+                        "category": kw["category"],
+                        "label": label,
+                    }
+                )
+
+        return matched_details
+
+    def match_article_keywords(
+        self, board: str, title: str, subscriber_id: Optional[int] = None
+    ) -> List[str]:
+        details = self.match_article_keywords_detailed(board, title, subscriber_id=subscriber_id)
+        return [d["label"] for d in details]
+
+    # =====================================================================
+    # AI Fuzzy Rules (with subscriber_id & P0-4 board quota check)
+    # =====================================================================
+    def get_fuzzy_rules(
+        self, board: Optional[str] = None, subscriber_id: Optional[int] = None
+    ) -> List[Dict]:
+        with self._lock:
+            query = (
+                "SELECT f.id, f.subscriber_id, f.description, f.board, f.category, f.hint_keywords, f.created_at "
+                "FROM fuzzy_rules f JOIN subscribers s ON f.subscriber_id = s.id WHERE s.enabled = 1"
+            )
+            params: List[Any] = []
+            if subscriber_id is not None:
+                query = (
+                    "SELECT f.id, f.subscriber_id, f.description, f.board, f.category, f.hint_keywords, f.created_at "
+                    "FROM fuzzy_rules f WHERE f.subscriber_id = ?"
+                )
+                params.append(subscriber_id)
+            if board:
+                query += " AND (f.board = 'ALL' OR f.board = ? COLLATE NOCASE)"
+                params.append(board)
+            query += " ORDER BY f.id ASC"
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_fuzzy_rule(
+        self,
+        description: str,
+        board: str = "HardwareSale",
+        category: str = "賣",
+        hint_keywords: str = "",
+        subscriber_id: int = 1,
+    ) -> Tuple[bool, Dict]:
+        description = sanitize_user_input(description, max_len=MAX_FUZZY_DESC_LEN)
+        board = sanitize_user_input(board, max_len=30) or "HardwareSale"
+        category = sanitize_user_input(category, max_len=10) or "賣"
+        if category.upper() not in ALLOWED_CATEGORIES and category not in ALLOWED_CATEGORIES:
+            category = "賣"
+        hint_keywords = sanitize_user_input(hint_keywords, max_len=80)
+        if not description:
+            return False, {"error": "模糊規則描述不可為空"}
+
+        quota = self.get_subscriber_quota(subscriber_id)
+        existing_rules = self.get_fuzzy_rules(subscriber_id=subscriber_id)
+        if len(existing_rules) >= quota["max_fuzzy_rules"]:
+            return False, {
+                "error": f"已達您的 AI 模糊規則數量上限（最多 `{quota['max_fuzzy_rules']}` 組）！"
+            }
+
+        if board.upper() != "ALL":
+            sub_boards = self.get_subscriber_distinct_boards(subscriber_id)
+            if board.lower() not in sub_boards and len(sub_boards) >= quota["max_boards"]:
+                return False, {
+                    "error": f"已達您可追蹤的不同看板數量上限（最多 `{quota['max_boards']}` 個看板）！"
+                }
+            if not self.is_board_tracked(board):
+                if not self.add_board(board):
+                    return False, {
+                        "error": f"系統全域盯梢看板名額已滿（上限 `{MAX_GLOBAL_ACTIVE_BOARDS}` 個），無法新增看板 `{board}`！"
+                    }
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._lock:
+            cur = self._conn.execute(
+                """
+                INSERT INTO fuzzy_rules (subscriber_id, description, board, category, hint_keywords, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (subscriber_id, description, board, category, hint_keywords, now_str),
+            )
+            self._conn.commit()
+            rule_id = cur.lastrowid
+            return True, {
+                "id": rule_id,
+                "subscriber_id": subscriber_id,
+                "description": description,
+                "board": board,
+                "category": category,
+                "hint_keywords": hint_keywords,
+                "created_at": now_str,
+            }
+
+    def remove_fuzzy_rule(
+        self, identifier: str, subscriber_id: int
+    ) -> Optional[Dict]:
+        """
+        V-05, V-08: Enforce strict multi-tenant isolation and SQL LIKE wildcard escaping (% and _)
+        with ESCAPE '/' to prevent unintended rule matching and deletion.
+        """
+        if subscriber_id is None or not isinstance(subscriber_id, int):
+            return None
+        identifier = str(identifier).strip().lstrip("#")
+        with self._lock:
+            row = None
+            if identifier.isdigit():
+                row = self._conn.execute(
+                    "SELECT * FROM fuzzy_rules WHERE id = ? AND subscriber_id = ?",
+                    (int(identifier), subscriber_id),
+                ).fetchone()
+            if not row:
+                escaped_id = identifier.replace("/", "//").replace("%", "/%").replace("_", "/_")
+                row = self._conn.execute(
+                    "SELECT * FROM fuzzy_rules WHERE description LIKE ? ESCAPE '/' AND subscriber_id = ?",
+                    (f"%{escaped_id}%", subscriber_id),
+                ).fetchone()
+            if not row:
+                return None
+            removed = dict(row)
+            self._conn.execute("DELETE FROM fuzzy_rules WHERE id = ?", (removed["id"],))
+            self._conn.commit()
+            return removed
+
+    def clear_fuzzy_rules(self, subscriber_id: int = 1) -> int:
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM fuzzy_rules WHERE subscriber_id = ?", (subscriber_id,)
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    # =====================================================================
+    # Seen Articles
+    # =====================================================================
+    def is_article_seen(self, url: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM seen_articles WHERE url = ?", (url,)
+            ).fetchone()
+            return row is not None
+
+    def filter_unseen_articles(self, articles: List[Dict]) -> List[Dict]:
+        if not articles:
+            return []
+        urls = [a["url"] for a in articles]
+        with self._lock:
+            placeholders = ",".join("?" for _ in urls)
+            rows = self._conn.execute(
+                f"SELECT url FROM seen_articles WHERE url IN ({placeholders})",
+                tuple(urls),
+            ).fetchall()
+            seen_set = {r["url"] for r in rows}
+        return [a for a in articles if a["url"] not in seen_set]
+
+    def mark_articles_seen(self, articles: List[Dict]) -> int:
+        if not articles:
+            return 0
+        now_ts = int(time.time())
+        added = 0
+        with self._lock:
+            for art in articles:
+                cur = self._conn.execute(
+                    """
+                    INSERT OR IGNORE INTO seen_articles (url, board, title, author, date_str, seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        art["url"],
+                        art["board"],
+                        art["title"],
+                        art.get("author", "未知"),
+                        art.get("date", ""),
+                        now_ts,
+                    ),
+                )
+                if cur.rowcount > 0:
+                    added += 1
+            self._conn.commit()
+        return added
+
+    def get_seen_count(self, board: Optional[str] = None) -> int:
+        with self._lock:
+            if board:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) as cnt FROM seen_articles WHERE board = ? COLLATE NOCASE",
+                    (board,),
+                ).fetchone()
+            else:
+                row = self._conn.execute("SELECT COUNT(*) as cnt FROM seen_articles").fetchone()
+            return row["cnt"] if row else 0
+
+    # =====================================================================
+    # Article Detail Cache & AI Judgment Cache
+    # =====================================================================
+    def get_cached_article(self, url: str, ttl_sec: int = ARTICLE_CACHE_TTL_SEC) -> Optional[Dict]:
+        cutoff = int(time.time()) - ttl_sec
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT detail_json FROM article_cache WHERE url = ? AND fetched_at >= ?",
+                (url, cutoff),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                return json.loads(row["detail_json"])
+            except Exception:
+                return None
+
+    def set_cached_article(self, url: str, detail: Dict) -> None:
+        now_ts = int(time.time())
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "INSERT INTO article_cache (url, detail_json, fetched_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(url) DO UPDATE SET detail_json = excluded.detail_json, fetched_at = excluded.fetched_at",
+                    (url, json.dumps(detail, ensure_ascii=False), now_ts),
+                )
+                self._conn.commit()
+            except Exception:
+                pass
+
+    def get_cached_ai_result(
+        self, url: str, check_key: str, ttl_sec: int = AI_CACHE_TTL_SEC
+    ) -> Optional[Dict]:
+        cutoff = int(time.time()) - ttl_sec
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT result_json FROM article_ai_cache WHERE url = ? AND check_key = ? AND created_at >= ?",
+                (url, check_key.lower(), cutoff),
+            ).fetchone()
+            if not row:
+                return None
+            try:
+                return json.loads(row["result_json"])
+            except Exception:
+                return None
+
+    def set_cached_ai_result(self, url: str, check_key: str, result: Dict, model: str = "") -> None:
+        now_ts = int(time.time())
+        with self._lock:
+            try:
+                self._conn.execute(
+                    """
+                    INSERT INTO article_ai_cache (url, check_key, result_json, model, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(url, check_key) DO UPDATE SET
+                        result_json = excluded.result_json,
+                        model = excluded.model,
+                        created_at = excluded.created_at
+                    """,
+                    (url, check_key.lower(), json.dumps(result, ensure_ascii=False), model, now_ts),
+                )
+                self._conn.commit()
+            except Exception:
+                pass
+
+    # =====================================================================
+    # Deliveries, 3-Day Repost Dedupe, & Sold Follow-Up (Fix P1-5)
+    # =====================================================================
+    def is_duplicate_delivery(
+        self, subscriber_id: int, article_url: str, dedupe_hash: str
+    ) -> bool:
+        cutoff = int(time.time()) - (DEDUPE_WINDOW_DAYS * 86400)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT 1 FROM deliveries
+                WHERE subscriber_id = ?
+                  AND (article_url = ? OR (dedupe_hash = ? AND delivered_at >= ?))
+                LIMIT 1
+                """,
+                (subscriber_id, article_url, dedupe_hash, cutoff),
+            ).fetchone()
+            return row is not None
+
+    def record_delivery(
+        self,
+        subscriber_id: int,
+        article: Dict,
+        channel_id: Optional[str],
+        message_id: Optional[str],
+    ) -> None:
+        now_ts = int(time.time())
+        d_hash = compute_dedupe_hash(
+            article.get("board", ""), article.get("author", ""), article.get("title", "")
+        )
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO deliveries
+                    (subscriber_id, article_url, board, title, author, dedupe_hash, channel_id, message_id, delivered_at, sold_marked, last_sold_check_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+                """,
+                (
+                    subscriber_id,
+                    article["url"],
+                    article.get("board", "HardwareSale"),
+                    article.get("title", ""),
+                    article.get("author", ""),
+                    d_hash,
+                    str(channel_id) if channel_id else None,
+                    str(message_id) if message_id else None,
+                    now_ts,
+                ),
+            )
+            self._conn.commit()
+
+    def get_recent_unmarked_deliveries(self, max_age_hours: int = 18, limit: int = 6) -> List[Dict]:
+        """
+        Fix P1-5: Order by `last_sold_check_at ASC, delivered_at DESC` so least-recently-checked
+        deliveries are rotated and checked fairly without starving older items!
+        """
+        cutoff = int(time.time()) - (max_age_hours * 3600)
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM deliveries
+                WHERE sold_marked = 0 AND message_id IS NOT NULL AND delivered_at >= ?
+                ORDER BY last_sold_check_at ASC, delivered_at DESC LIMIT ?
+                """,
+                (cutoff, limit),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def touch_delivery_sold_check(self, article_url: str) -> None:
+        now_ts = int(time.time())
+        with self._lock:
+            self._conn.execute(
+                "UPDATE deliveries SET last_sold_check_at = ? WHERE article_url = ?",
+                (now_ts, article_url),
+            )
+            self._conn.commit()
+
+    def mark_delivery_sold(self, article_url: str) -> None:
+        now_ts = int(time.time())
+        with self._lock:
+            self._conn.execute(
+                "UPDATE deliveries SET sold_marked = 1, last_sold_check_at = ? WHERE article_url = ?",
+                (now_ts, article_url),
+            )
+            self._conn.commit()
+
+    # =====================================================================
+    # Conversation Memory (Fix P2-4: Scoped by user_id:subscriber_id)
+    # =====================================================================
+    @staticmethod
+    def _make_memory_key(user_id: str, subscriber_id: Optional[int] = None) -> str:
+        if subscriber_id is not None:
+            return f"{user_id}:{subscriber_id}"
+        return str(user_id)
+
+    def get_conversation_memory(
+        self, user_id: str, subscriber_id: Optional[int] = None
+    ) -> List[Dict[str, str]]:
+        cutoff = int(time.time()) - MEMORY_TTL_SEC
+        mem_key = self._make_memory_key(user_id, subscriber_id)
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM conversation_memory WHERE created_at < ?", (cutoff,)
+            )
+            rows = self._conn.execute(
+                """
+                SELECT role, content FROM conversation_memory
+                WHERE user_id = ? AND created_at >= ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (mem_key, cutoff, MEMORY_MAX_TURNS),
+            ).fetchall()
+            self._conn.commit()
+            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+    def append_conversation_memory(
+        self, user_id: str, role: str, content: str, subscriber_id: Optional[int] = None
+    ) -> None:
+        now_ts = int(time.time())
+        mem_key = self._make_memory_key(user_id, subscriber_id)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO conversation_memory (user_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+                (mem_key, role, content[:1200], now_ts),
+            )
+            self._conn.commit()
+
+    def clear_conversation_memory(
+        self, user_id: str, subscriber_id: Optional[int] = None
+    ) -> None:
+        with self._lock:
+            if subscriber_id is not None:
+                mem_key = self._make_memory_key(user_id, subscriber_id)
+                self._conn.execute(
+                    "DELETE FROM conversation_memory WHERE user_id = ?", (mem_key,)
+                )
+            else:
+                self._conn.execute(
+                    "DELETE FROM conversation_memory WHERE user_id = ? OR user_id LIKE ?",
+                    (str(user_id), f"{user_id}:%"),
+                )
+            self._conn.commit()
+
+    # =====================================================================
+    # Periodic Cleanup & Daily DB Backup / WAL Checkpoint (P3-9)
+    # =====================================================================
+    def cleanup_old_articles(self, max_age_days: int = 14) -> int:
+        now_ts = int(time.time())
+        cutoff_seen = now_ts - (max_age_days * 86400)
+        cutoff_cache = now_ts - 7200
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM seen_articles WHERE seen_at < ?", (cutoff_seen,))
+            self._conn.execute("DELETE FROM article_cache WHERE fetched_at < ?", (cutoff_cache,))
+            self._conn.execute("DELETE FROM article_ai_cache WHERE created_at < ?", (cutoff_cache,))
+            self._conn.execute("DELETE FROM deliveries WHERE delivered_at < ?", (cutoff_seen,))
+            self._conn.commit()
+            return cur.rowcount
+
+    def backup_database_atomic(self, dest_path: str) -> None:
+        """
+        V-07: Perform atomic online SQLite WAL backup using sqlite3 backup API.
+        Guarantees point-in-time consistency and prevents corrupted backups.
+        """
+        with self._lock:
+            bck_conn = sqlite3.connect(dest_path)
+            try:
+                self._conn.backup(bck_conn)
+            finally:
+                bck_conn.close()
+
+    def run_daily_maintenance(self, backup_dir: Optional[str] = None) -> Optional[str]:
+        """
+        P3-9 & V-07: Perform WAL checkpoint (TRUNCATE) and create an atomic daily rotating backup in `backups/`
+        (retaining the latest 7 daily backups) using conn.backup().
+        """
+        day_tag = datetime.now().strftime("%Y%m%d")
+        last_maint = self.get_setting("last_maintenance_day", "")
+        if last_maint == day_tag:
+            return None
+
+        if backup_dir is None:
+            backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        dest_path = os.path.join(backup_dir, f"bot_data_{day_tag}.db")
+
+        with self._lock:
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+            try:
+                self.backup_database_atomic(dest_path)
+            except Exception:
+                dest_path = None
+            self.set_setting("last_maintenance_day", day_tag)
+
+        # Retain latest 7 backups
+        try:
+            backups = sorted(glob.glob(os.path.join(backup_dir, "bot_data_*.db")))
+            for old_f in backups[:-7]:
+                try:
+                    os.remove(old_f)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return dest_path

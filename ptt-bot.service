@@ -1,0 +1,19 @@
+[Unit]
+Description=PTT Multi-Tenant Discord Push & ReAct AI Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 請將下方 User 與 WorkingDirectory 修改為您伺服器上的實際使用者與專案路徑
+User=ubuntu
+WorkingDirectory=/opt/ptt_dc_bot
+EnvironmentFile=/opt/ptt_dc_bot/.env
+ExecStart=/opt/ptt_dc_bot/venv/bin/python /opt/ptt_dc_bot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/opt/ptt_dc_bot/bot.log
+StandardError=append:/opt/ptt_dc_bot/bot.log
+
+[Install]
+WantedBy=multi-user.target

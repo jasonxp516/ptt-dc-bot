@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+*.db
+*.db-*
+*.db.bak*
+*.log
+*.log.*
+venv/
+.venv/
+backups/
+data/
+__pycache__/
+.pytest_cache/
+tests/
+IMPLEMENTATION_GUIDE.md
