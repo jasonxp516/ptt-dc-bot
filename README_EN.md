@@ -219,19 +219,6 @@ When the bot connects to Discord for the first time with a clean database (no bo
 
 Type `/setup` in any server text channel (or inside a private DM with the bot) to open the visual control panel:
 
-```text
-+-----------------------------------------------------------------+
-| ⚙️ PTT-DC-Bot 視覺化互動設定面板                                |
-| 歸屬範圍：🏠 伺服器共用追蹤                                     |
-| 目前推播目標：⚠️ 尚未綁定                                       |
-| 系統監控看板：HardwareSale                                      |
-| 已設定關鍵字：尚未設定關鍵字                                    |
-+-----------------------------------------------------------------+
-| [📋 快速選擇監控看板（可多選）...                           ▼] |
-| [📌 綁定此頻道為推播頻道] [➕ 新增追蹤關鍵字] [🔔 測試推播通知] |
-+-----------------------------------------------------------------+
-```
-
 <p align="center">
   <img src="assets/setup_control_panel.svg" alt="PTT-DC-Bot /setup Interactive Dashboard" width="680"/>
 </p>
