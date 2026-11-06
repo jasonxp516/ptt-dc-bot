@@ -42,6 +42,19 @@ DISCORD_API_ME_URL = "https://discord.com/api/v10/users/@me"
 GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 USER_AGENT = "PTT-DC-Bot-SetupWizard"
 DEFAULT_BOARD_NAME = "HardwareSale"
+DEFAULT_LANGUAGE = "zh_TW"
+SUPPORTED_LANGUAGES = {
+    "1": "zh_TW",
+    "2": "en",
+    "zh_tw": "zh_TW",
+    "zh-tw": "zh_TW",
+    "zh": "zh_TW",
+    "tw": "zh_TW",
+    "en": "en",
+    "en_us": "en",
+    "en-us": "en",
+    "english": "en",
+}
 
 
 def generate_oauth2_url(client_id: str) -> str:
@@ -165,6 +178,7 @@ def write_env_file(
     poll_interval_max: int = 150,
     groq_model: str = "openai/gpt-oss-120b",
     groq_fast_model: str = "openai/gpt-oss-20b",
+    bot_language: str = "zh_TW",
 ) -> bool:
     """
     Write environment configuration to .env with UTF-8 encoding.
@@ -176,6 +190,8 @@ def write_env_file(
         "# =====================================================================\n\n"
         "# Discord Bot 憑證 (必填)\n"
         f"DISCORD_TOKEN={discord_token.strip()}\n\n"
+        "# 界面顯示語言 (zh_TW: 繁體中文, en: English)\n"
+        f"BOT_LANGUAGE={(bot_language or DEFAULT_LANGUAGE).strip()}\n\n"
         "# 預設主伺服器與預設推播頻道 ID (選填，亦可進入頻道後以 /setup 設定)\n"
         "DEFAULT_CHANNEL_ID=\n"
         "DEFAULT_GUILD_ID=\n\n"
@@ -242,7 +258,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     # -------------------------------------------------------------
     # Step 1: Discord Bot Token
     # -------------------------------------------------------------
-    print("【步驟 1/3】配置 Discord Bot Token")
+    print("【步驟 1/4】配置 Discord Bot Token")
     print("  1. 前往 Discord 開發者入口: https://discord.com/developers/applications")
     print("  2. 建立或選擇您的 Application，點選左側「Bot」分頁")
     print("  3. 點選「Reset Token」獲取金鑰並複製")
@@ -293,7 +309,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     # -------------------------------------------------------------
     # Step 2: Groq API Key (Optional)
     # -------------------------------------------------------------
-    print("【步驟 2/3】配置 Groq Cloud API Key (選填)")
+    print("【步驟 2/4】配置 Groq Cloud API Key (選填)")
     print("  Groq 提供超高速 AI 推論服務，用於自然語言追蹤與文章智慧審核。")
     print("  若您尚未申請，可前往免費獲取: https://console.groq.com/keys")
     print("  👉 若暫時不使用 AI 功能，可直接按 [Enter] 略過此步驟。\n")
@@ -327,7 +343,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     # -------------------------------------------------------------
     # Step 3: Default PTT Board
     # -------------------------------------------------------------
-    print("【步驟 3/3】設定預設監控看板")
+    print("【步驟 3/4】設定預設監控看板")
     print("  常見看板推薦: HardwareSale (電蝦), MacShop, nb-shopping, Gamesale, MobileComm")
     print(f"  👉 直接按 [Enter] 將採用預設值: {DEFAULT_BOARD_NAME}\n")
 
@@ -355,6 +371,47 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
             print("❌ 看板名稱格式不正確（僅限英數字、底線與連字號），請重新輸入。\n")
 
     # -------------------------------------------------------------
+    # Step 4: Bot Display Language
+    # -------------------------------------------------------------
+    print("【步驟 4/4】設定機器人顯示語言 (Display Language)")
+    print("  1. 繁體中文 (zh_TW) [預設]")
+    print("  2. English (en)")
+    print(f"  👉 直接按 [Enter] 將採用預設值: 1. 繁體中文 ({DEFAULT_LANGUAGE})\n")
+
+    bot_language = DEFAULT_LANGUAGE
+
+    while True:
+        try:
+            user_input = input("請選擇顯示語言編號 [1]: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n\n[精靈已取消] 設定未完成。")
+            return False
+        except StopIteration:
+            # Backward-compatibility guard for test mock input iterators
+            bot_language = DEFAULT_LANGUAGE
+            break
+
+        if not user_input:
+            bot_language = DEFAULT_LANGUAGE
+            print(f"✅ 使用預設語言: 繁體中文 ({bot_language})\n")
+            break
+
+        if user_input.lower() in ("q", "quit", "exit"):
+            print("[精靈已取消] 設定未完成。")
+            return False
+
+        normalized = SUPPORTED_LANGUAGES.get(user_input.lower())
+        if normalized:
+            bot_language = normalized
+            lang_label = "繁體中文 (zh_TW)" if bot_language == "zh_TW" else "English (en)"
+            print(f"✅ 設定語言: {lang_label}\n")
+            break
+        else:
+            bot_language = DEFAULT_LANGUAGE
+            print(f"⚠️ 輸入無效，採用預設語言: 繁體中文 ({bot_language})\n")
+            break
+
+    # -------------------------------------------------------------
     # Final: Save to .env
     # -------------------------------------------------------------
     print("💾 正在儲存設定至 .env 檔案...")
@@ -363,6 +420,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
         discord_token=discord_token,
         groq_api_key=groq_api_key,
         default_board=default_board,
+        bot_language=bot_language,
     )
 
     if success:

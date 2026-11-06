@@ -13,6 +13,19 @@ DEFAULT_GUILD_ID = os.getenv("DEFAULT_GUILD_ID", "").strip()
 OWNER_USER_ID = os.getenv("OWNER_USER_ID", "").strip()
 DEFAULT_BOARD = os.getenv("DEFAULT_BOARD", "HardwareSale").strip()
 
+SUPPORTED_LANGUAGES = {"zh_TW", "en"}
+DEFAULT_LANGUAGE = "zh_TW"
+
+
+def _parse_language(raw: str) -> str:
+    cleaned = (raw or "").strip().lower()
+    if cleaned in ("en", "en_us", "en-us", "english"):
+        return "en"
+    return DEFAULT_LANGUAGE
+
+
+BOT_LANGUAGE = _parse_language(os.getenv("BOT_LANGUAGE", DEFAULT_LANGUAGE))
+
 POLL_MIN = int(os.getenv("POLL_INTERVAL_MIN", "90"))
 POLL_MAX = int(os.getenv("POLL_INTERVAL_MAX", "150"))
 

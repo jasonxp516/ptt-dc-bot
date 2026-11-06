@@ -220,15 +220,15 @@ When the bot connects to Discord for the first time with a clean database (no bo
 Type `/setup` in any server text channel (or inside a private DM with the bot) to open the visual control panel:
 
 <p align="center">
-  <img src="assets/setup_control_panel.svg" alt="PTT-DC-Bot /setup Interactive Dashboard" width="680"/>
+  <img src="assets/setup_control_panel_en.svg" alt="PTT-DC-Bot /setup Interactive Dashboard" width="680"/>
 </p>
 
 Four-step walkthrough:
 
-1. **Step 1: Click "📌 綁定此頻道為推播頻道" (Bind Current Channel)**  
+1. **Step 1: Click "📌 Bind Channel"**  
    - Binds the current text channel as the notification target for the server with one click.
    - If clicked inside a private DM with the bot, sets the destination to your personal DM.
-2. **Step 2: Select Boards in "📋 快速選擇監控看板" (PopularBoardsSelect)**  
+2. **Step 2: Select Boards in "📋 Select Boards to Monitor" Dropdown**  
    - The dropdown menu is pre-populated with top trading boards:
      - `HardwareSale`: PC hardware (GPUs, CPUs, RAM, power supplies, peripherals) 🖥️
      - `MacShop`: Apple marketplace (MacBooks, iPhones, iPads, Apple accessories) 🍎
@@ -238,26 +238,26 @@ Four-step walkthrough:
    - Supports single or multiple selections. Selecting boards establishes initial baselines immediately without spamming historical posts.
 
 <p align="center">
-  <img src="assets/dropdown_boards_select.svg" alt="Popular Boards Multi-Select Dropdown" width="680"/>
+  <img src="assets/dropdown_boards_select_en.svg" alt="Popular Boards Multi-Select Dropdown" width="680"/>
 </p>
 
-3. **Step 3: Click "➕ 新增追蹤關鍵字" (Add Keyword Modal Form)**  
+3. **Step 3: Click "➕ Add Keyword" (Modal Form)**  
    - Opens a pop-up modal dialog with 4 structured fields:
-     - **Keyword (Required)**: Supports space AND logic (e.g., `3060Ti Taipei`) and minus exclusion (e.g., `3060 -laptop -mining`).
-     - **Board (Optional)**: Defaults to `HardwareSale`.
-     - **Category (Optional)**: Defaults to `賣` (Selling, excluding buying/WTS requests).
-     - **Max Price (Optional)**: Numeric budget ceiling (e.g., `6500`). Posts priced higher than this amount are filtered out automatically.
+     - **Tracking Keyword (Required)**: Supports space AND logic (e.g., `3060Ti Taipei`) and minus exclusion (e.g., `3060 -laptop -mining`).
+     - **Target Board (Optional)**: Defaults to `HardwareSale`.
+     - **Category Filter (Optional)**: Defaults to `賣` (Selling, excluding buying/WTS requests).
+     - **Max Budget (Optional)**: Numeric budget ceiling in NTD integer (e.g., `6500`). Posts priced higher than this amount are filtered out automatically.
 
 <p align="center">
-  <img src="assets/keyword_modal_form.svg" alt="Add Keyword Modal Dialog" width="560"/>
+  <img src="assets/keyword_modal_form_en.svg" alt="Add Keyword Modal Dialog" width="560"/>
 </p>
 
-4. **Step 4: Click "🔔 測試推播通知" (Test Push Notification)**  
+4. **Step 4: Click "🔔 Test Alert"**  
    - Dispatches a fully formatted test notification embed to the bound channel/DM immediately.
    - Confirms that the bot possesses send and embed permissions and verifies card rendering.
 
 <p align="center">
-  <img src="assets/notification_embed_preview.svg" alt="Real-time Push Notification Embed Preview" width="680"/>
+  <img src="assets/notification_embed_preview_en.svg" alt="Real-time Push Notification Embed Preview" width="680"/>
 </p>
 
 ---

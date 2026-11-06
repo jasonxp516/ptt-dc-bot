@@ -322,6 +322,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
         self.assertIn("DISCORD_TOKEN=mock_discord_token_xyz", content)
         self.assertIn("GROQ_API_KEY=gsk_mock_groq_key_123", content)
         self.assertIn("DEFAULT_BOARD=MacShop", content)
+        self.assertIn("BOT_LANGUAGE=zh_TW", content)
         self.assertIn("POLL_INTERVAL_MIN=60", content)
         self.assertIn("POLL_INTERVAL_MAX=120", content)
 
@@ -351,6 +352,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
             "  Bot mock_user_token_123  ",  # Token with Bot prefix and leading/trailing spaces
             "  gsk_mock_key_456  ",      # Groq key
             "nb-shopping",               # Default board
+            "1",                         # Language selection (1 -> zh_TW)
         ])
 
         with patch("sys.stdin.isatty", return_value=True), \
@@ -369,6 +371,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
             self.assertIn("DISCORD_TOKEN=mock_user_token_123", content)
             self.assertIn("GROQ_API_KEY=gsk_mock_key_456", content)
             self.assertIn("DEFAULT_BOARD=nb-shopping", content)
+            self.assertIn("BOT_LANGUAGE=zh_TW", content)
 
     def test_run_wizard_skips_optional_groq_key(self):
         """F04: User pressing Enter on Groq key skips it and writes empty key to .env."""
@@ -376,6 +379,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
             "mock_token",
             "",            # Skip Groq key
             "",            # Default board (Enter -> HardwareSale)
+            "",            # Language selection (Enter -> zh_TW default)
         ])
 
         with patch("sys.stdin.isatty", return_value=True), \
@@ -391,6 +395,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
 
             self.assertIn("GROQ_API_KEY=\n", content)
             self.assertIn("DEFAULT_BOARD=HardwareSale", content)
+            self.assertIn("BOT_LANGUAGE=zh_TW", content)
 
     def test_run_wizard_discord_retry_on_invalid_then_valid(self):
         """F02 (Tier 2 Retry Flow): Wizard recovers from invalid token entry and completes on retry."""
@@ -399,6 +404,7 @@ class TestSetupWizard(BaseDeploymentTestCase):
             "correct_token",
             "",
             "",
+            "",            # Language selection (Enter -> default)
         ])
 
         validation_responses = iter([
@@ -464,6 +470,118 @@ class TestSetupWizard(BaseDeploymentTestCase):
              patch("sys.stdout", new_callable=io.StringIO), \
              patch("sys.stderr.write"):
             self.assertFalse(setup_wizard.run_wizard(env_path=self.dummy_env_path))
+
+    def test_write_env_file_with_custom_bot_language(self):
+        """M2: write_env_file writes custom bot_language to .env file."""
+        ok = setup_wizard.write_env_file(
+            env_path=self.dummy_env_path,
+            discord_token="mock_discord_token_xyz",
+            bot_language="en",
+        )
+        self.assertTrue(ok)
+        with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("BOT_LANGUAGE=en", content)
+
+    def test_run_wizard_selects_english_language(self):
+        """M2: User selecting '2' at Step 4 saves BOT_LANGUAGE=en to .env."""
+        inputs = iter([
+            "mock_token",
+            "",            # Skip Groq key
+            "",            # Default board
+            "2",           # English (en)
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_discord_token", return_value=(True, "123", "TestBot", None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("BOT_LANGUAGE=en", content)
+
+    def test_run_wizard_selects_english_language_by_keyword(self):
+        """M2: User entering 'en' at Step 4 saves BOT_LANGUAGE=en to .env."""
+        inputs = iter([
+            "mock_token",
+            "",            # Skip Groq key
+            "",            # Default board
+            "en",          # English text input
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_discord_token", return_value=(True, "123", "TestBot", None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("BOT_LANGUAGE=en", content)
+
+    def test_run_wizard_selects_default_language_on_invalid_input(self):
+        """M2: Unrecognized language input defaults safely to zh_TW."""
+        inputs = iter([
+            "mock_token",
+            "",            # Skip Groq key
+            "",            # Default board
+            "99_invalid",  # Invalid language choice
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_discord_token", return_value=(True, "123", "TestBot", None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("BOT_LANGUAGE=zh_TW", content)
+
+    def test_run_wizard_handles_stop_iteration_fallback(self):
+        """M2: Backward-compatibility guard catches StopIteration at Step 4 and defaults to zh_TW."""
+        # 3 inputs only: token, groq, board -> 4th prompt raises StopIteration
+        inputs = iter([
+            "mock_token",
+            "",
+            "HardwareSale",
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_discord_token", return_value=(True, "123", "TestBot", None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("BOT_LANGUAGE=zh_TW", content)
+
+    def test_config_bot_language_parsing_and_defaults(self):
+        """M2: config._parse_language normalizes valid English variants and defaults safely to zh_TW."""
+        import config
+
+        # English variants
+        for val in ("en", "EN", "en_US", "en-us", "English", "english"):
+            self.assertEqual(config._parse_language(val), "en", f"Failed for {val}")
+
+        # Default / fallback variants
+        for val in ("zh_TW", "zh-tw", "zh", "fr", "ja", "", "   ", None):
+            self.assertEqual(config._parse_language(val), "zh_TW", f"Failed for {val}")
 
 
 # =============================================================================
@@ -830,6 +948,47 @@ class TestDiscordSetupUI(BaseDeploymentTestCase):
         target = asyncio.run(delivery.resolve_subscriber_target(sub))
         self.assertIsNone(target, "Unconfigured subscriber target channel should resolve to None")
         storage.close()
+
+    def test_setup_panel_embed_and_view_localized_rendering(self):
+        """M2: build_setup_panel_embed and SetupPanelView render English or Chinese according to config.BOT_LANGUAGE."""
+        import discord
+        import config
+        from bot import build_setup_panel_embed, SetupPanelView
+        from storage import BotStorage
+
+        storage = BotStorage(db_path=self.dummy_db_path)
+        sub = storage.get_or_create_subscriber("user", "123456789")
+
+        original_lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
+        try:
+            # 1. Test Traditional Chinese (zh_TW)
+            config.BOT_LANGUAGE = "zh_TW"
+            embed_zh = build_setup_panel_embed(sub, storage=storage)
+            view_zh = SetupPanelView(subscriber=sub)
+
+            self.assertIn("PTT-DC-Bot 視覺化互動設定面板", embed_zh.title)
+            self.assertIn("🌐 語言: 繁體中文 (zh_TW)", embed_zh.footer.text)
+            zh_labels = [b.label for b in view_zh.children if hasattr(b, "label") and b.label]
+            self.assertIn("📌 綁定此頻道為推播頻道", zh_labels)
+            self.assertIn("➕ 新增追蹤關鍵字", zh_labels)
+            self.assertIn("🔔 測試推播通知", zh_labels)
+
+            # 2. Test English (en)
+            config.BOT_LANGUAGE = "en"
+            embed_en = build_setup_panel_embed(sub, storage=storage)
+            view_en = SetupPanelView(subscriber=sub)
+
+            self.assertIn("PTT Tracking Dispatch Control Center", embed_en.title)
+            self.assertIn("🌐 Language: English (en)", embed_en.footer.text)
+            self.assertIn("📍 Current Alert Target", [f.name for f in embed_en.fields])
+            en_labels = [b.label for b in view_en.children if hasattr(b, "label") and b.label]
+            self.assertIn("📌 Bind Channel", en_labels)
+            self.assertIn("➕ Add Keyword", en_labels)
+            self.assertIn("🔔 Test Alert", en_labels)
+        finally:
+            config.BOT_LANGUAGE = original_lang
+            storage.close()
+
 
 
 # =============================================================================
@@ -1266,6 +1425,7 @@ class TestCrossFeatureAndRealWorldE2E(BaseDeploymentTestCase):
             "mock_prod_token_abc",
             "",                      # Skip Groq key
             "HardwareSale",          # Default board
+            "1",                     # Language selection (1 -> zh_TW)
         ])
         with patch("sys.stdin.isatty", return_value=True), \
              patch("builtins.input", side_effect=lambda _: next(inputs)), \

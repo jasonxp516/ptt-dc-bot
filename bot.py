@@ -23,6 +23,7 @@ import discord
 from discord import app_commands
 from dotenv import load_dotenv
 
+import config
 from config import (
     DB_PATH,
     DEFAULT_BOARD,
@@ -1049,8 +1050,14 @@ class PopularBoardsSelect(discord.ui.Select):
             )
             for board, desc, emoji in POPULAR_BOARDS
         ]
+        lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
+        placeholder = (
+            "📋 Select boards to monitor (multi-select)..."
+            if lang == "en"
+            else "📋 快速選擇監控看板（可多選）..."
+        )
         super().__init__(
-            placeholder="📋 快速選擇監控看板（可多選）...",
+            placeholder=placeholder,
             custom_id="ptt:setup:select_board",
             min_values=1,
             max_values=len(options),
@@ -1248,6 +1255,12 @@ class SetupPanelView(discord.ui.View):
         self.btn_add_keyword = self.add_keyword_button
         self.btn_test_push = self.test_push_button
 
+        lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
+        if lang == "en":
+            self.bind_channel_button.label = "📌 Bind Channel"
+            self.add_keyword_button.label = "➕ Add Keyword"
+            self.test_push_button.label = "🔔 Test Alert"
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.subscriber and self.subscriber.get("scope") == "user":
             if str(interaction.user.id) != str(self.subscriber.get("discord_id")):
@@ -1410,60 +1423,133 @@ def build_setup_panel_embed(
     is_dm: bool = False,
 ) -> discord.Embed:
     storage_inst = storage or bot.storage
+    lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
+
     if not scope_label:
-        scope_label = "👤 個人專屬追蹤" if (is_dm or sub.get("scope") == "user") else "🏠 伺服器共用追蹤"
+        if lang == "en":
+            scope_label = (
+                "👤 Personal Tracking (DM)"
+                if (is_dm or sub.get("scope") == "user")
+                else "🏠 Server-wide Tracking"
+            )
+        else:
+            scope_label = (
+                "👤 個人專屬追蹤"
+                if (is_dm or sub.get("scope") == "user")
+                else "🏠 伺服器共用追蹤"
+            )
+    elif lang == "en":
+        if "個人" in scope_label:
+            scope_label = "👤 Personal Tracking (DM)"
+        elif "伺服器" in scope_label:
+            scope_label = "🏠 Server-wide Tracking"
 
     push_ch = sub.get("push_channel_id")
     if push_ch:
         ch_text = f"<#{push_ch}> (`{push_ch}`)"
     else:
-        ch_text = "💬 **Discord 私訊 (DM 直接通知)**" if (is_dm or sub.get("scope") == "user") else "⚠️ **尚未綁定**（請點擊下方按鈕設定）"
+        if lang == "en":
+            ch_text = (
+                "💬 **Discord DM (Direct Notification)**"
+                if (is_dm or sub.get("scope") == "user")
+                else "⚠️ **Not bound yet** (click the button below to configure)"
+            )
+        else:
+            ch_text = (
+                "💬 **Discord 私訊 (DM 直接通知)**"
+                if (is_dm or sub.get("scope") == "user")
+                else "⚠️ **尚未綁定**（請點擊下方按鈕設定）"
+            )
 
     boards = [b["name"] for b in storage_inst.get_boards()]
     kws = storage_inst.get_keywords(subscriber_id=sub["id"])
     quota = storage_inst.get_subscriber_quota(sub["id"])
 
-    embed = discord.Embed(
-        title="⚙️ PTT-DC-Bot 視覺化互動設定面板",
-        description=(
-            f"**歸屬範圍**：`{scope_label}`\n"
-            "歡迎使用 PTT 智慧追蹤機器人！透過本面板，您可以一鍵完成推播頻道綁定、"
-            "勾選熱門二手交易看板、新增追蹤關鍵字，並發送測試推播驗證。"
-        ),
-        color=discord.Color.from_rgb(52, 152, 219),
-        timestamp=datetime.now(),
-    )
-    embed.add_field(
-        name="📍 目前推播目標",
-        value=ch_text,
-        inline=False,
-    )
-    embed.add_field(
-        name=f"📋 系統監控看板 ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
-        value=", ".join(f"`{b}`" for b in boards) if boards else "尚未加入任何看板",
-        inline=False,
-    )
-    kw_summary = (
-        ", ".join(f"`{k['keyword']}`" for k in kws[:10])
-        if kws
-        else "尚未設定關鍵字（點擊下方按鈕新增）"
-    )
-    embed.add_field(
-        name=f"🎯 已設定追蹤關鍵字 ({len(kws)}/{quota.get('max_keywords', 10)})",
-        value=kw_summary,
-        inline=False,
-    )
-    embed.add_field(
-        name="🚀 快速設定引導",
-        value=(
-            "1️⃣ 點擊 **「📌 綁定此頻道為推播頻道」** 設定通知目標\n"
-            "2️⃣ 在下拉選單中快速勾選要監控的 **熱門交易看板**\n"
-            "3️⃣ 點擊 **「➕ 新增追蹤關鍵字」** 填入想購買的商品與預算上限\n"
-            "4️⃣ 點擊 **「🔔 測試推播通知」** 確認通知卡片正常送達"
-        ),
-        inline=False,
-    )
-    embed.set_footer(text="PTT-DC-Bot /setup 互動設定面板")
+    if lang == "en":
+        embed = discord.Embed(
+            title="⚙️ PTT Tracking Dispatch Control Center",
+            description=(
+                f"**Scope**: `{scope_label}`\n"
+                "Welcome to PTT Smart Tracker! Use this panel to bind notification channels, "
+                "select monitored trading boards, add tracking keywords, and test alerts."
+            ),
+            color=discord.Color.from_rgb(52, 152, 219),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(
+            name="📍 Current Alert Target",
+            value=ch_text,
+            inline=False,
+        )
+        embed.add_field(
+            name=f"📋 Monitored Boards ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
+            value=", ".join(f"`{b}`" for b in boards) if boards else "No boards added yet",
+            inline=False,
+        )
+        kw_summary = (
+            ", ".join(f"`{k['keyword']}`" for k in kws[:10])
+            if kws
+            else "No keywords configured (click below to add)"
+        )
+        embed.add_field(
+            name=f"🎯 Configured Keywords ({len(kws)}/{quota.get('max_keywords', 10)})",
+            value=kw_summary,
+            inline=False,
+        )
+        embed.add_field(
+            name="🚀 Quick Setup Guide",
+            value=(
+                "1️⃣ Click **\"📌 Bind Channel\"** to set alert target\n"
+                "2️⃣ Select trading boards from dropdown\n"
+                "3️⃣ Click **\"➕ Add Keyword\"** to set item & budget\n"
+                "4️⃣ Click **\"🔔 Test Alert\"** to verify delivery"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="PTT-DC-Bot /setup Interactive Panel • 🌐 Language: English (en)")
+    else:
+        embed = discord.Embed(
+            title="⚙️ PTT-DC-Bot 視覺化互動設定面板",
+            description=(
+                f"**歸屬範圍**：`{scope_label}`\n"
+                "歡迎使用 PTT 智慧追蹤機器人！透過本面板，您可以一鍵完成推播頻道綁定、"
+                "勾選熱門二手交易看板、新增追蹤關鍵字，並發送測試推播驗證。"
+            ),
+            color=discord.Color.from_rgb(52, 152, 219),
+            timestamp=datetime.now(),
+        )
+        embed.add_field(
+            name="📍 目前推播目標",
+            value=ch_text,
+            inline=False,
+        )
+        embed.add_field(
+            name=f"📋 系統監控看板 ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
+            value=", ".join(f"`{b}`" for b in boards) if boards else "尚未加入任何看板",
+            inline=False,
+        )
+        kw_summary = (
+            ", ".join(f"`{k['keyword']}`" for k in kws[:10])
+            if kws
+            else "尚未設定關鍵字（點擊下方按鈕新增）"
+        )
+        embed.add_field(
+            name=f"🎯 已設定追蹤關鍵字 ({len(kws)}/{quota.get('max_keywords', 10)})",
+            value=kw_summary,
+            inline=False,
+        )
+        embed.add_field(
+            name="🚀 快速設定引導",
+            value=(
+                "1️⃣ 點擊 **「📌 綁定此頻道為推播頻道」** 設定通知目標\n"
+                "2️⃣ 在下拉選單中快速勾選要監控的 **熱門交易看板**\n"
+                "3️⃣ 點擊 **「➕ 新增追蹤關鍵字」** 填入想購買的商品與預算上限\n"
+                "4️⃣ 點擊 **「🔔 測試推播通知」** 確認通知卡片正常送達"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="PTT-DC-Bot /setup 互動設定面板 • 🌐 語言: 繁體中文 (zh_TW)")
+
     return embed
 
 
