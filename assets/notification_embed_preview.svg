@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 450" width="680" height="450">
+  <defs>
+    <style>
+      .bg { fill: #313338; }
+      .text-title { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 15px; font-weight: 700; fill: #00A8FC; }
+      .text-bot-name { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 15px; font-weight: 600; fill: #F2F3F5; }
+      .text-time { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 12px; fill: #949BA4; }
+      .text-author-header { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 12px; font-weight: 600; fill: #DBDEE1; }
+      .text-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 12px; font-weight: 600; fill: #B5BAC1; }
+      .text-val { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 12px; fill: #DBDEE1; }
+      .text-price { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 14px; font-weight: 700; fill: #57F287; }
+      .text-submuted { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 10px; fill: #949BA4; }
+      .text-code { font-family: Consolas, 'Courier New', monospace; font-size: 11px; fill: #57F287; }
+      .text-code-author { font-family: Consolas, 'Courier New', monospace; font-size: 11px; fill: #DBDEE1; }
+      .text-btn { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; font-size: 13px; font-weight: 500; fill: #FFFFFF; text-anchor: middle; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect class="bg" width="680" height="450" rx="8" />
+
+  <!-- Bot Avatar -->
+  <circle cx="36" cy="36" r="18" fill="#5865F2" />
+  <text x="36" y="41" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="12" font-weight="bold" fill="#FFFFFF" text-anchor="middle">PTT</text>
+
+  <!-- Bot Message Header -->
+  <text x="66" y="32" class="text-bot-name">PTT-DC-Bot</text>
+  <rect x="160" y="19" width="38" height="18" rx="4" fill="#5865F2" />
+  <text x="179" y="32" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="10" font-weight="700" fill="#FFFFFF" text-anchor="middle">APP</text>
+  <text x="210" y="32" class="text-time">今天 23:22</text>
+
+  <!-- Embed Container -->
+  <rect x="66" y="48" width="584" height="332" rx="4" fill="#2B2D31" />
+  <!-- Left Accent Bar (#2ECC71 Emerald Green for "賣") -->
+  <path d="M 66 52 A 4 4 0 0 1 70 48 L 70 376 A 4 4 0 0 1 66 376 Z" fill="#2ECC71" />
+
+  <!-- Embed Author Header -->
+  <text x="82" y="70" class="text-author-header">PTT 【HardwareSale】新上架通知（尚未售出）</text>
+
+  <!-- Title Link -->
+  <text x="82" y="93" class="text-title">[賣/台北/皆可] ASUS Dual RTX 3060 Ti 8G (保固內)</text>
+
+  <!-- Field 1: 命中精確關鍵字 -->
+  <text x="82" y="117" class="text-label">🎯 命中精確關鍵字</text>
+  <rect x="82" y="123" width="70" height="20" rx="3" fill="#1E1F22" />
+  <text x="117" y="137" class="text-code" text-anchor="middle">3060Ti</text>
+
+  <!-- Row 1: 👤 作者 / 🏷️ 分類 / 📅 日期與推文 -->
+  <text x="82" y="165" class="text-label">👤 作者</text>
+  <rect x="82" y="171" width="80" height="20" rx="3" fill="#1E1F22" />
+  <text x="122" y="185" class="text-code-author" text-anchor="middle">seller123</text>
+
+  <text x="220" y="165" class="text-label">🏷️ 分類</text>
+  <rect x="220" y="171" width="36" height="20" rx="3" fill="#1E1F22" />
+  <text x="238" y="185" class="text-code" text-anchor="middle">賣</text>
+
+  <text x="340" y="165" class="text-label">📅 日期 / 推文</text>
+  <text x="340" y="186" class="text-val"><tspan font-family="Consolas, monospace" fill="#F2F3F5">11/06</tspan> (推: <tspan font-family="Consolas, monospace" fill="#F2F3F5">0</tspan>)</text>
+
+  <!-- Row 2: 💰 欲售價格 / 📍 交易方式/地區 / 👥 買家熱度 -->
+  <text x="82" y="217" class="text-label">💰 欲售價格</text>
+  <text x="82" y="238" class="text-price">6,500元</text>
+
+  <text x="220" y="217" class="text-label">📍 交易方式/地區</text>
+  <rect x="220" y="223" width="168" height="20" rx="3" fill="#1E1F22" />
+  <text x="228" y="237" class="text-code-author">全台賣貨便 / 台北面交</text>
+
+  <text x="420" y="217" class="text-label">👥 買家熱度</text>
+  <text x="420" y="237" class="text-val">✨ 尚無人留言排隊</text>
+
+  <!-- Field 8: AI 品況/語意摘要 -->
+  <text x="82" y="271" class="text-label">🤖 AI 品況/語意摘要</text>
+  <rect x="82" y="278" width="552" height="32" rx="3" fill="#1E1F22" />
+  <text x="94" y="299" class="text-code-author">原廠盒裝齊全，保固至 2026/08，非礦卡，功能正常，個人升級汰換</text>
+
+  <!-- Footer -->
+  <text x="82" y="362" class="text-submuted">發文: 2026-11-06 23:22:15 | 🏠 伺服器共用追蹤 | AI審核: llama-3.3-70b-versatile • 今天 23:22</text>
+
+  <!-- Attached Button (Link to PTT) -->
+  <rect x="66" y="394" width="310" height="38" rx="4" fill="#4E5058" />
+  <text x="221" y="418" class="text-btn">🔗 前往 PTT HardwareSale 查看原文</text>
+</svg>

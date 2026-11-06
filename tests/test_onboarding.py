@@ -1,5 +1,5 @@
 """
-Milestone 3 Empirical Challenge Test Suite:
+PTT-DC-Bot Onboarding & Clean Boot Lifecycle Test Suite:
 Clean boot lifecycle, owner resolution, deduplication, and exception paths in PTTDiscordBot.
 """
 import os
@@ -8,6 +8,39 @@ import tempfile
 import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
+
+# Ensure repo root and isolated virtualenv site-packages are in sys.path
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+VENV_SITE = "/tmp/test_venv/lib/python3.13/site-packages"
+if os.path.exists(VENV_SITE) and VENV_SITE not in sys.path:
+    sys.path.insert(0, VENV_SITE)
+
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
+# Safe default environment for tests to prevent writing to read-only repo root
+import config
+_MODULE_TMPDIR = None
+if not os.environ.get("LOG_PATH") or not os.environ.get("DB_PATH"):
+    _MODULE_TMPDIR = tempfile.TemporaryDirectory()
+    if not os.environ.get("LOG_PATH"):
+        config.LOG_PATH = os.path.join(_MODULE_TMPDIR.name, "bot.log")
+        os.environ["LOG_PATH"] = config.LOG_PATH
+    if not os.environ.get("DB_PATH"):
+        config.DB_PATH = os.path.join(_MODULE_TMPDIR.name, "bot_data.db")
+        os.environ["DB_PATH"] = config.DB_PATH
+
+
+def tearDownModule():
+    global _MODULE_TMPDIR
+    if _MODULE_TMPDIR is not None:
+        try:
+            _MODULE_TMPDIR.cleanup()
+        except Exception:
+            pass
+
 
 import discord
 from storage import BotStorage

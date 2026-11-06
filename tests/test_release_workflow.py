@@ -1,6 +1,6 @@
 """
 Adversarial Stress Test Suite for .dockerignore and docker-compose.yml
-Verification Harness for challenger_m4_2 (EMPIRICAL CHALLENGER)
+Release workflow verification for packaging, container hardening, and compose schemas.
 """
 import fnmatch
 import os
