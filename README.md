@@ -504,3 +504,10 @@ LOG_PATH=/tmp/test.log DB_PATH=/tmp/test.db PYTHONPYCACHEPREFIX=/tmp/pycache PYT
 ```
 
 測試涵蓋設定精靈、Token 離線驗證、OAuth2 URL 計算、跨平台雙擊啟動器語法、Discord `/setup` 互動 UI、CI/CD 發布設定與安全性邊界。
+
+---
+
+## 致謝與聲明 (Acknowledgements & Disclaimer)
+
+本專案之核心架構、PTT 爬蟲與業務過濾邏輯由開發者主導設計完成；在開發與發布準備過程中，藉由 Google Gemini 模型的輔助進行程式碼重構、安全性滲透防禦加固、跨平台部署自動化腳本編寫與中英雙語文件在地化。
+

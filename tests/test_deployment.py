@@ -1765,7 +1765,7 @@ class TestSecurityAndCleanlinessAudits(unittest.TestCase):
 
         inspected_extensions = (".py", ".sh", ".ps1", ".bat", ".command", ".md", ".yml", ".json")
         for root, dirs, files in os.walk(BASE_DIR):
-            if ".git" in root or ".venv" in root or "venv" in root or ".agents" in root:
+            if ".git" in root or ".venv" in root or "venv" in root or ".agents" in root or "pre_release_verification" in root:
                 continue
             for file in files:
                 if any(file.endswith(ext) for ext in inspected_extensions):

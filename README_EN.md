@@ -506,3 +506,10 @@ LOG_PATH=/tmp/test.log DB_PATH=/tmp/test.db PYTHONPYCACHEPREFIX=/tmp/pycache PYT
 ```
 
 Testing covers setup wizard CLI, token offline validation, OAuth2 URL calculation, cross-platform launcher syntax, Discord `/setup` interactive UI, CI/CD release workflows, and security guardrails.
+
+---
+
+## Acknowledgements & Disclaimer
+
+The core architecture, PTT crawler logic, and business rules of this project were designed and authored by the developer. Google Gemini was utilized as an AI programming assistant for code refactoring, security vulnerability remediation, cross-platform deployment automation, and bilingual documentation localization.
+

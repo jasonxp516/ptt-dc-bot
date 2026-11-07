@@ -14,4 +14,5 @@ __pycache__/
 .DS_Store
 IMPLEMENTATION_GUIDE.md
 .agents/
+pre_release_verification/
 
