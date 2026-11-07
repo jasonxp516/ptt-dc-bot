@@ -47,18 +47,23 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 # Safe default environment for tests to prevent writing to read-only repo root
 import config
-_MODULE_TMPDIR = tempfile.TemporaryDirectory()
-config.LOG_PATH = os.path.join(_MODULE_TMPDIR.name, "bot.log")
-config.DB_PATH = os.path.join(_MODULE_TMPDIR.name, "bot_data.db")
-os.environ["LOG_PATH"] = config.LOG_PATH
-os.environ["DB_PATH"] = config.DB_PATH
+_MODULE_TMPDIR = None
+if not os.environ.get("LOG_PATH") or not os.environ.get("DB_PATH"):
+    _MODULE_TMPDIR = tempfile.TemporaryDirectory()
+    if not os.environ.get("LOG_PATH"):
+        config.LOG_PATH = os.path.join(_MODULE_TMPDIR.name, "bot.log")
+        os.environ["LOG_PATH"] = config.LOG_PATH
+    if not os.environ.get("DB_PATH"):
+        config.DB_PATH = os.path.join(_MODULE_TMPDIR.name, "bot_data.db")
+        os.environ["DB_PATH"] = config.DB_PATH
 
 
 def tearDownModule():
-    try:
-        _MODULE_TMPDIR.cleanup()
-    except Exception:
-        pass
+    if _MODULE_TMPDIR is not None:
+        try:
+            _MODULE_TMPDIR.cleanup()
+        except Exception:
+            pass
 
 # Feature availability indicators for progressive testability
 HAS_SETUP_WIZARD = os.path.exists(os.path.join(BASE_DIR, "setup_wizard.py"))
