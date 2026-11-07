@@ -54,8 +54,6 @@
 1. **Discord Bot Token**：至 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Application，在「Bot」分頁點擊 **Reset Token** 取得金鑰；**請務必在下方開啟 `Message Content Intent`**。
 2. **Groq API Key（免費）**：至 [Groq Console](https://console.groq.com/keys) 註冊並點擊 **Create API Key** 取得金鑰（格式為 `gsk_...`）。
 
-> **💡 核心體驗升級**：若使用**方式一**或**方式二**，您**完全不需要手動建立或編輯 `.env` 檔案**！啟動時內建的設定精靈會自動引導輸入、即時連線驗證，並**自動計算產出帶有完整權限的專屬 Discord 邀請連結**，直接點開即可將機器人加入伺服器。
-
 ---
 
 ### 方式一：一行指令自動安裝與引導（推薦）

@@ -55,8 +55,6 @@ Before running the bot, please prepare two free credentials:
 1. **Discord Bot Token**: Open the [Discord Developer Portal](https://discord.com/developers/applications), create an Application, go to the **Bot** tab, and click **Reset Token**; **be sure to enable `Message Content Intent` below**.
 2. **Groq API Key (Free)**: Sign up or log in at [Groq Console](https://console.groq.com/keys) and click **Create API Key** (starts with `gsk_...`).
 
-> **💡 Experience Upgrade**: If you use **Method 1** or **Method 2**, you **do not need to create or edit a `.env` file manually**! The built-in setup wizard will guide you through terminal inputs, validate tokens in real time, and **automatically calculate your bot's dedicated Discord OAuth2 invite link with full permissions**, ready to add to your server with one click.
-
 ---
 
 ### Method 1: One-Liner Automatic Installation (Fastest Setup)
