@@ -9,7 +9,7 @@
 [![SQLite WAL](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/wal.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An asynchronous PTT (Taiwan Bulletin Board System) board monitor and Discord push notification bot combining deterministic rule-based filtering with Groq LLM semantic reasoning.
+An asynchronous PTT (Taiwan Bulletin Board System) board monitor and multi-platform push notification bot (supporting Discord, Telegram, and Email SMTP) combining deterministic rule-based filtering with Groq LLM semantic reasoning.
 
 Built specifically for high-velocity second-hand trading boards (`HardwareSale`, `MacShop`, `nb-shopping`, `Gamesale`, `MobileComm`, etc.), PTT-DC-Bot resolves the common pain points of traditional alert bots: dead notifications for already-sold items, missed products in multi-item listings, and hardware model specifications being misidentified as asking prices.
 
@@ -51,9 +51,11 @@ Most existing PTT alert solutions (such as PttAlertor, RSS bots, or basic webhoo
 
 ## Quick Start & Deployment: 3 Streamlined Options
 
-Before running the bot, please prepare two free credentials:
-1. **Discord Bot Token**: Open the [Discord Developer Portal](https://discord.com/developers/applications), create an Application, go to the **Bot** tab, and click **Reset Token**; **be sure to enable `Message Content Intent` below**.
-2. **Groq API Key (Free)**: Sign up or log in at [Groq Console](https://console.groq.com/keys) and click **Create API Key** (starts with `gsk_...`).
+Before running the bot, please prepare the free credentials for your preferred notification platform(s):
+1. **Discord Bot Token (if using Discord)**: Open the [Discord Developer Portal](https://discord.com/developers/applications), create an Application, navigate to the **Bot** tab, and click **Reset Token**. Ensure **Message Content Intent** is enabled under Privileged Gateway Intents.
+2. **Telegram Bot Token (if using Telegram)**: Open Telegram, message [@BotFather](https://t.me/BotFather), run `/newbot`, and copy the HTTP API token provided.
+3. **Gmail App Password (if using Email SMTP)**: In your Google Account, enable 2-Step Verification and generate a 16-character [App Password](https://myaccount.google.com/apppasswords).
+4. **Groq API Key (Optional)**: Sign up at [Groq Console](https://console.groq.com/keys) and click **Create API Key** (starts with `gsk_...`) for natural language AI assistance and semantic filtering.
 
 ---
 
@@ -182,9 +184,37 @@ docker compose down
 
 ---
 
-## Discord Onboarding & Visual `/setup` Control Panel
+## Multi-Platform Support & Platform Comparison Matrix
 
-Once your bot is online, channel configuration, board subscriptions, and keyword management can all be completed directly within Discord via interactive buttons and menus, without needing to memorize complex command syntax.
+Starting with the Beta release, PTT-DC-Bot features a decoupled Provider & Dispatcher architecture (`delivery.py`), allowing a single crawler engine to broadcast notifications across multiple messaging platforms simultaneously. Users can configure any combination of Discord, Telegram, and Email via the interactive setup wizard (`setup_wizard.py`).
+
+To provide full transparency on platform trade-offs and explain why certain platforms (such as LINE) are not supported, the following matrix compares the four major communication services:
+
+| Evaluation Dimension | Discord (Production v1.0.0) | Telegram Bot (Beta Expansion) | Email SMTP (Beta Expansion) | LINE Messaging API (Restricted / Unsupported) |
+| :--- | :--- | :--- | :--- | :--- |
+| **Operating Cost** | [Zero Cost] 100% Free | [Zero Cost] 100% Free | [Zero Cost] 100% Free (Gmail / custom SMTP) | [High Cost] 200 free pushes/mo; paid tiers start at NT$800+/mo (~$25 USD) |
+| **Connection & NAT** | Outbound WebSocket Gateway (No public IP / SSL needed) | Outbound Long Polling (`getUpdates`) (No public IP / SSL needed) | Outbound SMTP TCP (Port 587 STARTTLS / Port 465 SSL) | [Strict Requirement] Requires public HTTPS Webhook URL with valid CA SSL |
+| **Push Quota & Limits** | Unlimited (Standard Discord rate limits) | Unlimited (30 msg/s broadcast limit) | ~500 emails/day (Personal Gmail free limit) | [Hard Limitation] Capped at 200 active push messages/month total |
+| **Interactive Commands** | Native Slash Commands, buttons, select menus, modal dialogs | Text slash commands (`/start`, `/keyword_add`, etc.), inline keyboard | None (One-way push only; bidirectional requires IMAP polling) | Webhook server required with custom command parsing |
+| **In-Place Sold Updates** | [Supported] Edits original message embed with strikethrough | [Supported] `editMessageText` updates message in-place with strikethrough | [Unsupported] Sent emails cannot be modified retroactively | [Impractical] Requires sending additional push messages, draining quota |
+| **Extra Dependencies** | `discord.py` | [Zero New Dependencies] Reuses existing `aiohttp` | [Zero New Dependencies] Standard library `smtplib` + `asyncio.to_thread` | Requires external HTTP web server framework and reverse proxy |
+| **Primary Use Case** | Discord server community broadcast & personal DM alerts | Private instant mobile alerts & cross-platform messaging | Long-term high-value post archiving & desktop email notifications | Infeasible for open-source self-hosted setups |
+| **Feasibility Status** | **Production Supported (v1.0.0)** | **Supported in Beta (Recommended)** | **Supported in Beta (Recommended)** | **Infeasible (Technical & Economic Barriers)** |
+
+*Key Takeaways*:
+- **Discord & Telegram**: Recommended for real-time bidirectional interaction, rich UI buttons, and 18-hour in-place post updates when items sell out.
+- **Email (SMTP)**: Recommended for persistent notification archiving and zero-tunneling operation across desktop and mobile devices.
+- **LINE**: Infeasible due to LINE Notify service shutdown on March 31, 2025, and the 200/month push ceiling on LINE Messaging API.
+
+---
+
+## Platform Setup Guides & Onboarding (Click to expand)
+
+PTT-DC-Bot supports modular notification delivery. You may configure any combination of Discord, Telegram, and Email. Step-by-step setup guides for each platform, along with an in-depth feasibility analysis of LINE, are organized below:
+
+<details>
+<summary><b>[Guide] Discord Bot Setup & Channel Configuration</b></summary>
+<br>
 
 ### 1. Adding the Bot to Your Server (OAuth2 Permissions)
 
@@ -197,7 +227,7 @@ Once your bot is online, channel configuration, board subscriptions, and keyword
   - `Embed Links` (required for notification cards)
   - `Read Message History`
 
-> **[Critical Note]**: Make sure to visit the [Discord Developer Portal](https://discord.com/developers/applications) → Your Bot → **Bot** tab → **Privileged Gateway Intents**, enable **Message Content Intent**, and save changes. Without this intent, the bot cannot process conversational commands or direct messages.
+> **[Critical Note]**: Make sure to visit the [Discord Developer Portal](https://discord.com/developers/applications) -> Your Bot -> **Bot** tab -> **Privileged Gateway Intents**, enable **Message Content Intent**, and save changes. Without this intent, the bot cannot process conversational commands or direct messages.
 
 ---
 
@@ -259,6 +289,180 @@ Four-step walkthrough:
 <p align="center">
   <img src="assets/notification_embed_preview_en.svg" alt="Real-time Push Notification Embed Preview" width="680"/>
 </p>
+
+</details>
+
+<details>
+<summary><b>[Guide] Telegram Bot Setup & Push Binding</b></summary>
+<br>
+
+### 1. Create a Bot via @BotFather
+
+1. Open Telegram and search for the official [@BotFather](https://t.me/BotFather).
+2. Send `/start`, then send `/newbot`.
+3. Follow the prompts to provide:
+   - **Bot Display Name**: e.g., `My PTT Tracker`
+   - **Bot Username**: Must end in `bot` (e.g., `my_ptt_tracker_bot`).
+4. @BotFather will return your HTTP API Token:
+   ```text
+   Use this token to access the HTTP API:
+   123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567
+   ```
+5. *(Optional)* Configure slash commands auto-completion by sending `/setcommands` to @BotFather:
+   ```text
+   start - Register and activate push notifications
+   keyword_add - Add keyword tracking rule
+   keyword_list - View and manage active rules
+   pause - Pause push notifications
+   resume - Resume push notifications
+   status - Check system and crawler status
+   me - View personal quotas and subscription ID
+   help - Display usage manual
+   ```
+   *(Note: The bot also automatically registers these commands on startup via `setMyCommands`).*
+
+---
+
+### 2. Retrieve Push Target Chat ID
+
+- **Personal DM Alerts**:
+  1. Open your bot in Telegram (search for `@your_bot_username` or click its `t.me` link).
+  2. Click **Start** or send `/start`. The bot initializes your subscription and displays your personal `Chat ID` (e.g., `123456789`).
+  3. You may also look up your ID via [@userinfobot](https://t.me/userinfobot) or [@raw_data_bot](https://t.me/raw_data_bot).
+- **Group Notifications**:
+  1. Add your bot to the target Telegram group.
+  2. Send `/start` inside the group to obtain the group Chat ID (a negative integer, e.g. `-1001234567890`).
+
+---
+
+### 3. Configure Environment Variables
+
+Run the setup wizard (`python3 setup_wizard.py`) and enter option `2` (or `1,2` for both Discord and Telegram). The wizard validates your Telegram token against `api.telegram.org` using standard Python libraries.
+
+Alternatively, set the variables directly in `.env`:
+```ini
+ENABLE_TELEGRAM=true
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_1234567
+TELEGRAM_CHAT_ID=123456789
+```
+
+---
+
+### 4. Interactive Commands & Rules Management
+
+- `/start`: Register subscription and view welcome card with Chat ID.
+- `/help`: Display operational guide with syntax and parameter examples.
+- `/keyword_add <keyword> [max_price]`: Add a tracking rule (e.g., `/keyword_add 4070Super 18000`; or explicit syntax `/keyword_add HardwareSale 賣 3060Ti 6500`).
+- `/keyword_list`: List active tracking rules. Each rule includes an inline keyboard button for one-click deletion.
+- `/pause` and `/resume`: Temporarily pause or resume push alerts without losing rules.
+- `/status`: Check crawler synchronization status and post counts.
+- `/me`: View personal subscription status and limits.
+
+---
+
+### 5. Advanced Features
+
+- **PTT Web Link Button**: Every notification card features an inline URL button linking directly to the original PTT post.
+- **In-Place Sold Updates (`editMessageText`)**: When a tracked item is marked as sold by its author, the bot edits the original Telegram message in-place with a strikethrough and `[已售出]` badge, keeping your chat free of duplicate alert spam.
+- **NAT / Firewall Traversal**: Built on outbound Long Polling (`getUpdates`), requiring zero public IP addresses, domain names, SSL certificates, or port forwarding. Works out of the box on standard home networks.
+
+</details>
+
+<details>
+<summary><b>[Guide] Email (SMTP) Push & App Password Setup</b></summary>
+<br>
+
+### 1. Generate a Gmail App Password (Zero Cost)
+
+1. Log in to your [Google Account](https://myaccount.google.com/).
+2. Navigate to **Security** -> **How you sign in to Google**.
+3. Ensure **2-Step Verification** is turned ON.
+4. Navigate to [App Passwords](https://myaccount.google.com/apppasswords).
+5. Enter an app name (e.g., `PTT Bot`) and click **Create**.
+6. Google will generate a 16-character password (e.g., `abcd efgh ijkl mnop`). Copy this password without spaces.
+
+> **[Security Warning]**: Never use your primary Google Account password. Always use a dedicated 16-character App Password, which can be revoked at any time from your Google Security console.
+
+---
+
+### 2. Configure Environment Variables
+
+Run the setup wizard (`python3 setup_wizard.py`) and enter option `3` (or combination `1,3`, `1,2,3`). The wizard performs an interactive handshake test (HELO, TLS, authentication) to verify your credentials.
+
+Alternatively, configure `.env` directly:
+```ini
+ENABLE_EMAIL=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_account@gmail.com
+SMTP_PASSWORD=abcdefghijklmnop
+SMTP_USE_TLS=true
+EMAIL_FROM=your_account@gmail.com
+EMAIL_FROM_NAME=PTT Smart Tracker
+EMAIL_TO=recipient1@example.com,recipient2@example.com
+```
+
+---
+
+### 3. Architecture & Delivery Features
+
+- **Non-Blocking Asynchronous Sending**: Sync SMTP network calls are offloaded to an asynchronous background worker pool via `asyncio.to_thread`, ensuring the main crawler loop is never delayed.
+- **Responsive HTML Card Layout**: Emails use MIME `multipart/alternative` formatting. The HTML version includes board category badges, formatted article titles with direct PTT links, extracted asking prices, snippet previews, and a CTA button.
+- **Anti-XSS & Header Injection Defenses**:
+  - All external PTT text (titles, author usernames, and snippets) is escaped with `html.escape` to prevent malicious HTML injection.
+  - Email header fields (`Subject`, `From`, `To`) are sanitized through `clean_header_value` to strip carriage returns (`\r`, `\n`), completely neutralizing SMTP CRLF header injection vulnerabilities.
+- **Multi-Recipient Parsing**: Supports single email addresses or comma/semicolon/newline-delimited lists with strict RFC 5322 regex validation.
+- **Operational Note**: Due to standard email protocol design, messages cannot be edited after delivery (in-place sold strikethroughs are not supported for email).
+
+</details>
+
+<details>
+<summary><b>[Analysis] LINE Platform Feasibility & Hard Limitations</b></summary>
+<br>
+
+### 1. Overview & Community Demand
+
+Due to LINE's widespread adoption in Taiwan and East Asia, users frequently inquire whether PTT-DC-Bot can deliver push alerts to LINE. The engineering team conducted a comprehensive feasibility study and determined that **LINE is technically and economically infeasible for self-hosted open-source software**.
+
+---
+
+### 2. The Sunset of LINE Notify (March 31, 2025)
+
+- **Official Termination**: LINE Corporation officially terminated the LINE Notify service on **March 31, 2025**.
+- **Permanent Sunset**: As of April 1, 2025, all HTTP requests to `https://notify-api.line.me/api/notify` return `HTTP 410 Gone` or `404 Not Found`.
+- **Impact**: LINE Notify was historically the only zero-cost, friction-free notification mechanism on LINE. Its shutdown permanently eliminated free personal token-based alerts.
+
+---
+
+### 3. Technical & Economic Barriers of LINE Messaging API
+
+Following the sunset of LINE Notify, the only remaining method to send messages programmatically on LINE is the **LINE Messaging API** (LINE Official Account). However, it imposes critical blockers:
+
+1. **Severe Free Quota Cap (200 Push Messages / Month)**:
+   - The LINE Official Account Free Plan (Communication) provides **only 200 free push messages per month** across the entire account.
+   - While interactive replies (`replyMessage`) are free, automated tracking notifications are fundamentally **asynchronous proactive pushes (`pushMessage`)**.
+   - Push quota is billed per recipient: 1 post delivered to 3 subscribers consumes 3 messages.
+   - On active trading boards (`HardwareSale`, `Lifeismoney`), 10 to 20 matching posts appear daily. A single subscriber exhausts the monthly quota in just **10 to 14 days**; a multi-user group crashes within 48 hours.
+   - Once the 200-message ceiling is hit, all subsequent pushes fail with HTTP 429 errors until the first day of the next month.
+2. **Prohibitive Pricing for Open-Source Self-Hosting**:
+   - Upgrading requires a commercial plan:
+     - **Light Plan**: ~NT$800 / month (~$25 USD) for up to 5,000 messages.
+     - **Standard Plan**: ~NT$1,200 / month (~$38 USD) for up to 30,000 messages.
+   - Imposing a recurring monthly subscription on an open-source tool directly violates the project's zero-cost design principle.
+3. **Network Architecture Barrier (Mandatory Public HTTPS Webhook)**:
+   - LINE Messaging API **does not support outbound Long Polling or WebSocket connections**.
+   - All inbound events require a publicly accessible HTTPS Webhook endpoint with a valid CA-signed SSL certificate (self-signed certs are rejected).
+   - For users running behind residential broadband, NAT, or CGNAT, this requires port forwarding, DDNS, or third-party reverse tunneling services (e.g., ngrok or Cloudflare Tunnel), introducing high maintenance complexity and failure points.
+
+---
+
+### 4. Strategic Recommendation
+
+Based on these insurmountable constraints, PTT-DC-Bot will not implement LINE Messaging API support. Users desiring real-time mobile push notifications are strongly encouraged to use:
+- **Telegram Bot**: 100% free, unlimited pushes, outbound Long Polling (no public IP or SSL needed), interactive inline buttons, and in-place message editing.
+- **Email (SMTP)**: 100% free via Gmail App Passwords, universally accessible, and requiring zero port forwarding.
+
+</details>
 
 ---
 
@@ -391,14 +595,29 @@ bash restart_bg.sh
 
 | Variable Name | Required | Default | Description |
 | :--- | :---: | :--- | :--- |
-| `DISCORD_TOKEN` | **Yes** | None | Discord Bot authentication token |
-| `GROQ_API_KEY` | **Yes** | None | Groq Cloud API key (powers natural language assistant & sold semantic detection) |
-| `DEFAULT_CHANNEL_ID` | No | Empty | Default Discord notification channel ID (recommended to configure via `/setup`) |
-| `DEFAULT_GUILD_ID` | No | Empty | Primary Discord server ID (assigned owner-tier quotas) |
-| `OWNER_USER_ID` | No | Empty | Bot administrator Discord User ID (auto-resolved from guild owner if omitted) |
+| `BOT_LANGUAGE` | No | `zh_TW` | Bot display language (`zh_TW` or `en`) |
 | `DEFAULT_BOARD` | No | `HardwareSale` | Default PTT board to monitor upon initial startup |
 | `POLL_INTERVAL_MIN` | No | `90` | Minimum background polling interval in seconds |
 | `POLL_INTERVAL_MAX` | No | `150` | Maximum background polling interval in seconds (jittered to avoid fixed patterns) |
+| `ENABLE_DISCORD` | No | `true` | Enable or disable Discord bot provider (`true` / `false`) |
+| `DISCORD_TOKEN` | If DC active | None | Discord Bot authentication token |
+| `DEFAULT_CHANNEL_ID` | No | Empty | Default Discord notification channel ID (recommended to configure via `/setup`) |
+| `DEFAULT_GUILD_ID` | No | Empty | Primary Discord server ID (assigned owner-tier quotas) |
+| `OWNER_USER_ID` | No | Empty | Bot administrator Discord User ID (auto-resolved from guild owner if omitted) |
+| `ENABLE_TELEGRAM` | No | `false` | Enable or disable Telegram bot provider (`true` / `false`) |
+| `TELEGRAM_BOT_TOKEN` | If TG active | None | Telegram Bot API token from @BotFather |
+| `TELEGRAM_CHAT_ID` | No | Empty | Default Telegram Chat ID for automated push alerts |
+| `TELEGRAM_ADMIN_USER_ID`| No | Empty | Telegram User ID of administrator |
+| `ENABLE_EMAIL` | No | `false` | Enable or disable Email SMTP provider (`true` / `false`) |
+| `SMTP_HOST` | If Mail active | `smtp.gmail.com` | SMTP outgoing mail server hostname |
+| `SMTP_PORT` | If Mail active | `587` | SMTP port (`587` for STARTTLS, `465` for SSL) |
+| `SMTP_USER` | If Mail active | None | SMTP username or sending email address |
+| `SMTP_PASSWORD` | If Mail active | None | SMTP password or 16-character Google App Password |
+| `SMTP_USE_TLS` | No | `true` | Use STARTTLS encryption (`true` / `false`) |
+| `EMAIL_FROM` | No | Same as user | Sender email address |
+| `EMAIL_FROM_NAME` | No | `PTT Smart Tracker` | Display name for outgoing notification emails |
+| `EMAIL_TO` | If Mail active | None | Default recipient email addresses (comma-separated) |
+| `GROQ_API_KEY` | Optional | None | Groq Cloud API key (powers natural language assistant & sold semantic detection) |
 | `GROQ_MODEL` | No | `openai/gpt-oss-120b` | Primary high-parameter LLM model for semantic reasoning |
 | `GROQ_FAST_MODEL` | No | `openai/gpt-oss-20b` | Lightweight LLM model for fast preliminary screening |
 | `DB_PATH` | No | `bot_data.db` | SQLite database file path (`/app/data/bot_data.db` in Docker) |
@@ -412,31 +631,37 @@ bash restart_bg.sh
 
 ```text
 ptt-dc-bot/
-├── bot.py               # Discord Client, 25 Slash commands, /setup UI View, polling engine
-├── setup_wizard.py      # Standalone interactive CLI configuration wizard (standard library only)
-├── install.sh           # Linux / macOS one-liner installation script
-├── install.ps1          # Windows PowerShell one-liner installer
-├── start_windows.bat    # Windows double-click launcher with crash recovery loop
-├── start_mac.command    # macOS double-click launcher
-├── config.py            # Environment validation, quota constants, and input sanitization
-├── storage.py           # SQLite WAL multi-tenant database, schema migrations, atomic backups
-├── ptt_crawler.py       # Async PTT crawler, dual-layer sold detection, per-item virtual views
-├── groq_scheduler.py    # Priority queue (P0~P3) and dynamic 3-model rate-limit scheduler
-├── groq_agent.py        # ReAct AI agent, tool execution guards, and prompt injection defense
-├── delivery.py          # Notification dispatcher, 3-day deduplication, 18-hour in-place edits
-├── embeds.py            # Discord Embed formatting, character limit truncation, pagination
-├── Dockerfile           # Python 3.11-slim container image definition (non-root execution)
-├── docker-compose.yml   # Multi-arch container orchestration and ./data volume persistence
-├── .dockerignore        # 26 exclusion rules preventing credentials, logs, and cache packaging
-├── .github/workflows/   # release.yml CI/CD test gate, release packages, and GHCR publishing
-└── tests/               # 100% offline mock unit test suite
+├── bot.py                     # Discord Client, Slash commands, /setup UI View, polling engine
+├── telegram_bot.py            # Telegram Bot Client (Long Polling, slash commands, inline buttons)
+├── email_notifier.py          # Email SMTP async notification provider (HTML cards, anti-XSS)
+├── delivery.py                # Decoupled Dispatcher & BaseNotificationProvider routing
+├── setup_wizard.py            # Multi-platform interactive CLI configuration wizard (standard library)
+├── install.sh                 # Linux / macOS one-liner installation script
+├── install.ps1                # Windows PowerShell one-liner installer
+├── start_windows.bat          # Windows double-click launcher with crash recovery loop
+├── start_mac.command          # macOS double-click launcher
+├── config.py                  # Environment validation, multi-platform flags, and sanitization
+├── storage.py                 # SQLite WAL multi-tenant database (schema v4), migrations, backups
+├── ptt_crawler.py             # Async PTT crawler, dual-layer sold detection, per-item virtual views
+├── groq_scheduler.py          # Priority queue (P0~P3) and dynamic 3-model rate-limit scheduler
+├── groq_agent.py              # ReAct AI agent, tool execution guards, and prompt injection defense
+├── embeds.py                  # Discord Embed formatting, character limit truncation, pagination
+├── docs/
+│   ├── MULTI_PLATFORM_FEASIBILITY.md # Feasibility study for LINE, Telegram, and Email
+│   └── RELEASE_NOTES_v1.0.0.md       # v1.0.0 official release notes
+├── Dockerfile                 # Python 3.11-slim container image definition (non-root execution)
+├── docker-compose.yml         # Multi-arch container orchestration and ./data volume persistence
+├── .dockerignore              # 26 exclusion rules preventing credentials, logs, and cache packaging
+├── .github/workflows/         # release.yml CI/CD test gate, release packages, and GHCR publishing
+└── tests/                     # 100% offline mock unit test suite
 ```
 
 **Crawl-Once, Fan-Out Polling Pipeline**:
 1. **Active Board Aggregation**: Only boards with active subscriber rules are queried; unmonitored boards are skipped.
 2. **Shared Fetch & Caching**: Each active board is fetched once per cycle. Article text caches (10-minute TTL) and AI judgment caches (60-minute TTL) are shared across all subscribers, preventing PTT 503 rate-limiting.
 3. **Per-Keyword Virtual Slicing**: Slices multi-item posts via `apply_keyword_view` to decouple item prices and sold statuses.
-4. **18-Hour Round-Robin In-Place Tracking**: Delivers updates via in-place message editing when items are confirmed sold.
+4. **Decoupled Multi-Platform Dispatching**: `DeliveryDispatcher` routes matched posts to registered providers (`DiscordNotificationProvider`, `TelegramNotificationProvider`, `EmailNotificationProvider`) according to subscriber platform preference.
+5. **18-Hour In-Place Tracking**: Background engine tracks sold updates over an 18-hour window, executing in-place strikethrough message edits on Discord and Telegram.
 
 </details>
 

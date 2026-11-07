@@ -9,7 +9,7 @@
 [![SQLite WAL](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/wal.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-結合規則過濾與 Groq LLM 語意判讀的 PTT 看板監控與 Discord 推播機器人。
+結合規則過濾與 Groq LLM 語意判讀的 PTT 看板監控與多平台推播機器人（支援 Discord、Telegram 與 Email SMTP）。
 主要針對 `HardwareSale`（電蝦二手）、`MacShop`（蘋果二手）、`nb-shopping`（筆電交易）、`Gamesale`（遊戲交易）、`MobileComm`（手機通訊）等買賣看板設計，解決傳統推播工具常見的「點進去才發現已售出」、「合售文被誤判結案」與「型號數字被當成售價」等問題。
 
 ---
@@ -50,9 +50,11 @@
 
 ## 快速開始：三大部署方式（三選一）
 
-在開始之前，請先準備好兩項免費金鑰：
-1. **Discord Bot Token**：至 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Application，在「Bot」分頁點擊 **Reset Token** 取得金鑰；**請務必在下方開啟 `Message Content Intent`**。
-2. **Groq API Key（免費）**：至 [Groq Console](https://console.groq.com/keys) 註冊並點擊 **Create API Key** 取得金鑰（格式為 `gsk_...`）。
+在開始之前，請先根據欲使用的推播管道準備對應憑證（至少具備一種推播管道憑證）：
+1. **Discord Bot Token（若使用 Discord）**：至 [Discord Developer Portal](https://discord.com/developers/applications) 建立 Application，在「Bot」分頁點擊 **Reset Token** 取得金鑰；**請務必在下方開啟 `Message Content Intent`**。
+2. **Telegram Bot Token 與 Chat ID（若使用 Telegram）**：至 Telegram [@BotFather](https://t.me/BotFather) 取得 Token，並取得個人或群組 Chat ID。
+3. **Email SMTP 應用程式密碼（若使用 Email）**：至 [Google 帳戶安全性](https://myaccount.google.com/security) 產生 16 碼「應用程式密碼」。
+4. **Groq API Key（推薦，選用）**：至 [Groq Console](https://console.groq.com/keys) 免費註冊並點擊 **Create API Key** 取得金鑰（格式為 `gsk_...`），用於啟用自然語言白話文對話與 AI 售出語意審核。
 
 ---
 
@@ -181,27 +183,59 @@ docker compose down
 
 ---
 
-## Discord 首次啟動引導與 `/setup` 視覺化 UI 操作指南
+## 多平台支援與可行性綜合評估
 
-機器人成功啟動後，後續的頻道設定、看板訂閱與關鍵字管理完全可以在 Discord 介面內透過視覺化按鈕與選單完成，無需記憶任何複雜指令。
+本專案支援多平台推播架構，使用者可依自身需求選用單一或多個通知管道（例如：以 Telegram 作為個人即時手機推播、Discord 作為伺服器社群廣播、Email 作為重要信件存檔）：
 
-### 1. 將機器人加入伺服器（OAuth2 權限說明）
+### 四大通知平台特性綜合比較表
 
-- **自動產生的專屬邀請連結**：  
-  若您使用安裝腳本或雙擊啟動器，設定精靈驗證 Token 成功後會直接在終端機印出帶有權限整數 `274877975552` 的專屬邀請網址。點開該網址並選擇您的伺服器即可完成授權。
-- **手動邀請權限確認**：  
-  若自建邀請網址，請確認包含 Scopes：`bot` 與 `applications.commands`；Bot Permissions 需包含：
-  - `View Channels`（檢視頻道）
-  - `Send Messages`（發送訊息）
-  - `Embed Links`（嵌入連結，卡片排版必備）
-  - `Read Message History`（讀取歷史訊息）
+| 評估維度 | Discord (現行正式版) | Telegram Bot (Beta 新增) | Email SMTP (Beta 新增) | LINE Messaging API (受限不支援) |
+| :--- | :--- | :--- | :--- | :--- |
+| **運作成本** | [支援] 完全免費 | [支援] 完全免費 | [支援] 完全免費 (Gmail / 個人伺服器) | [不支援] 每月僅 200 則免費，超額月費 NT$800 起 |
+| **連線機制** | WebSocket Gateway (出站) | Long Polling 長輪詢 (出站) | SMTP TCP (出站) | [限制] 雙向強制需公網 HTTPS Webhook |
+| **NAT/家用穿透** | [支援] 無需公網 IP / 免憑證 | [支援] 無需公網 IP / 免憑證 | [支援] 無需公網 IP / 免憑證 | [限制] 需固定 IP、網域、SSL 或反向穿透工具 |
+| **推播數量限制** | 無硬性上限 (遵循 API 限速) | 無硬性上限 (全域 30 msg/s) | 每日約 500 封 (Gmail 限制) | [限制] 每月僅 200 則主動推播硬性上限 |
+| **雙向互動能力** | 原生 Slash 指令、按鈕、下拉選單 | 文字斜線指令、行內按鈕選單 | 僅單向通知 (雙向需另建 IMAP 輪詢) | 需自行架設 Webhook 伺服器 |
+| **售出原位更新** | [支援] 支援 (原訊息編輯劃線) | [支援] 支援 (`editMessageText` 劃線) | [限制] 不支援 (信件送達後不可竄改) | [限制] 僅能另發推播更新 (加速耗盡額度) |
+| **外部相依套件** | `discord.py` | [支援] 零新增套件 (沿用 `aiohttp`) | [支援] 零新增套件 (內建 `smtplib`) | 需新增 HTTP Webhook 伺服器套件 |
+| **主要適用場景** | 伺服器社群廣播、個人私訊盯梢 | 個人即時通知、跨平台群組推播 | 關鍵重要商品備份、低頻郵件提醒 | 現階段不建議使用 |
+| **可行性結論** | **正式版已支援** | **推薦使用 (Beta 支援)** | **推薦使用 (Beta 支援)** | **受限不支援 (成本與技術障礙)** |
 
-> **[重要提醒]**：請務必至 [Discord 開發者後台](https://discord.com/developers/applications) -> 你的 Bot -> **Bot** 分頁 -> **Privileged Gateway Intents**，將 **Message Content Intent** 開啟並儲存。若未開啟此選項，機器人將無法讀取訊息內容與私訊對話。
+*關鍵結論*：
+- **Discord & Telegram**：推薦用於即時雙向互動、豐富按鈕介面與 18 小時商品售出自動原位劃線更新。
+- **Email (SMTP)**：推薦用於重要通知永久留存歸檔，跨電腦與行動裝置零穿透限制。
+- **LINE**：因 LINE Notify 於 2025/3/31 終止服務，且 LINE Messaging API 每月僅 200 則免費主動推播上限，自架成本過高，現階段不予支援。
 
 ---
 
-### 2. 首次連線自動私訊引導 (Clean Boot Welcome DM)
+## 多平台設定與初次啟動教學（點擊展開）
 
+請點擊下方摺疊區塊展開對應平台的完整設定指引：
+
+<details>
+<summary><b>[教學] Discord 機器人加入與頻道設定</b></summary>
+<br>
+
+#### 步驟 1：建立 Discord Application 與取得 Token
+1. 開啟 [Discord Developer Portal](https://discord.com/developers/applications) 並登入您的 Discord 帳號。
+2. 點擊右上角 **New Application**，輸入應用程式名稱（例如 `PTT-Tracker`）。
+3. 切換至左側選單的 **Bot** 分頁，點擊 **Reset Token** 並複製生成的 Bot Token。
+4. **重要設定**：在同一頁面向下捲動至 **Privileged Gateway Intents** 區塊，務必將 **Message Content Intent** 切換為開啟（ON）並點擊儲存變更。若未開啟此選項，機器人將無法讀取指令與私訊。
+
+#### 步驟 2：產生邀請連結並將機器人加入伺服器（OAuth2 權限說明）
+1. 切換至左側選單的 **OAuth2** -> **URL Generator**。
+2. 在 **Scopes** 勾選：
+   - `bot`
+   - `applications.commands`
+3. 在下方出現的 **Bot Permissions** 勾選以下必要權限（權限整數為 `274877975552`）：
+   - `View Channels`（檢視頻道）
+   - `Send Messages`（發送訊息）
+   - `Embed Links`（嵌入連結，卡片排版必備）
+   - `Read Message History`（讀取歷史訊息）
+4. 複製底部產生的專屬邀請網址，貼至瀏覽器開啟並選擇欲加入的 Discord 伺服器完成授權。
+   - 範例網址格式：`https://discord.com/oauth2/authorize?client_id=<你的_CLIENT_ID>&permissions=274877975552&scope=bot%20applications.commands`
+
+#### 步驟 3：首次連線自動私訊引導 (Clean Boot Welcome DM)
 當機器人首次登入且系統處於全新安裝狀態（尚未綁定任何推播頻道且無關鍵字）時：
 1. 終端機會印出顯著的提示訊息：
    ```text
@@ -212,10 +246,7 @@ docker compose down
    ```
 2. 機器人會主動向 Application Owner（機器人建立者）發送一則歡迎私訊，提供快速開始 4 步驟教學與核心指令摘要。
 
----
-
-### 3. `/setup` 視覺化互動面板操作流程
-
+#### 步驟 4：`/setup` 視覺化互動面板操作流程
 在目標伺服器文字頻道中輸入 `/setup`（或直接在機器人的私訊視窗中輸入 `/setup`），即可喚出視覺化控制面板：
 
 <p align="center">
@@ -223,7 +254,6 @@ docker compose down
 </p>
 
 面板四大操作步驟：
-
 1. **第一步：點擊「綁定此頻道為推播頻道」按鈕**  
    - 一鍵將目前所在的文字頻道設為推播目標。
    - 若在與機器人的私訊（DM）視窗點擊，則會直接設定為個人專屬私訊推播。
@@ -258,6 +288,115 @@ docker compose down
 <p align="center">
   <img src="assets/notification_embed_preview.svg" alt="即時推播通知 Embed 卡片預覽" width="680"/>
 </p>
+
+</details>
+
+<details>
+<summary><b>[教學] Telegram 機器人建立與推播綁定</b></summary>
+<br>
+
+#### 步驟 1：透過 @BotFather 建立 Telegram 機器人
+1. 開啟 Telegram，在搜尋列搜尋官方認證帳號 [@BotFather](https://t.me/BotFather) 並開啟對話。
+2. 發送指令 `/newbot`。
+3. 依提示輸入機器人的顯示名稱（例如 `PTT 追蹤機器人`）。
+4. 輸入機器人的使用者名稱（Username，結尾必須為 `bot` 或 `_bot`，例如 `my_ptt_tracker_bot`）。
+5. 建立完成後，@BotFather 會回傳 HTTP API Token，格式為 `<bot_id>:<secret>`（例如 `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`）。請妥善保存此 Token。
+
+#### 步驟 2：啟動機器人並取得專屬 Chat ID
+1. 在 Telegram 搜尋剛剛建立的機器人 Username 並進入對話視窗。
+2. 點擊底部的 **Start** 按鈕，或手動發送 `/start` 指令。
+3. 機器人會立即回應歡迎卡片，卡片內即清楚標明您的專屬 `Chat ID`（純數字例如 `123456789`）與訂閱者代號。
+   - 若欲在 Telegram 群組接收推播，請將機器人拉入群組，並在群組內發送 `/start`，取得以 `-` 或 `-100` 開頭的群組 Chat ID。
+
+#### 步驟 3：配置環境變數或執行設定精靈
+- **方式 A（使用設定精靈，推薦）**：執行 `./install.sh` 或 `python3 setup_wizard.py`，平台選單選擇 `2`（Telegram）或 `1,2`（Discord + Telegram），貼入 Bot Token 與 Chat ID，精靈會自動調用 `getMe` 與 `getChat` 完成連線驗證。
+- **方式 B（直接編輯 .env）**：
+  ```ini
+  ENABLE_TELEGRAM=true
+  TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+  TELEGRAM_CHAT_ID=123456789
+  ```
+
+#### 步驟 4：日常指令與互動管理
+- `/start`：顯示歡迎資訊、Chat ID 與指令摘要。
+- `/help`：顯示完整指令參數說明與使用範例。
+- `/keyword_add <看板> <分類> <關鍵字> [預算]`：新增追蹤條件（例如 `/keyword_add HardwareSale 賣 3060Ti 7000`；亦支援簡化語法 `/keyword_add 4070Super 18000`）。
+- `/keyword_list`：檢視目前啟用的所有追蹤關鍵字。清單下方會自動生成對應的行內按鈕（Inline Keyboard），點擊即可一鍵刪除指定規則。
+- `/pause` 與 `/resume`：隨時切換推播通知之暫停與恢復，不影響已設定之關鍵字清單。
+- `/status`：檢視各看板爬蟲連線、更新基準線狀態與歷史累積推播量。
+- `/me`：查看個人訂閱等級、每日額度使用狀況與規則數量。
+
+#### 步驟 5：特色功能說明
+- **PTT 原文一鍵閱讀**：每則推播卡片下方均附帶「前往 PTT 原文」行內按鈕，點擊可直接在瀏覽器開啟文章。
+- **商品售出自動劃線（In-Place Edit）**：當文章標題更新或作者於推文標註「已售出」時，機器人會透過 `editMessageText` API 自動在原訊息加上刪除線與 `[已售出]` 標記，保持對話視窗整潔不洗版。
+- **長輪詢無痛穿透**：基於出站長輪詢（Long Polling）技術，無需公網 IP、網域名稱或 SSL 憑證，家用網路與防火牆後端皆可隨開即用。
+
+</details>
+
+<details>
+<summary><b>[教學] Email (SMTP) 郵件通知與 App Password 設定</b></summary>
+<br>
+
+#### 步驟 1：啟用 Gmail 兩步驟驗證並產生應用程式密碼 (App Password)
+若使用 Gmail 作為發信伺服器，Google 政策規定不可直接使用個人登入密碼，必須使用專用之「應用程式密碼」：
+1. 登入 Google 帳戶並前往 [安全性設定中心](https://myaccount.google.com/security)。
+2. 確認「如何登入 Google」區塊中的 **兩步驟驗證 (2-Step Verification)** 狀態為已啟用。
+3. 在搜尋欄搜尋「應用程式密碼」或直接前往 [應用程式密碼設定頁面](https://myaccount.google.com/apppasswords)。
+4. 輸入自訂名稱（例如 `PTT-Bot`），點擊「建立」。
+5. 系統會顯示一組 **16 碼英文字母專用密碼**（例如 `abcd efgh ijkl mnop`）。請複製並妥善保存（密碼中間的空格可保留亦可去除）。
+
+#### 步驟 2：配置環境變數或執行設定精靈
+- **方式 A（使用設定精靈，推薦）**：執行 `./install.sh` 或 `python3 setup_wizard.py`，平台選單選擇 `3`（Email），依序輸入 SMTP 主機、連接埠、使用者帳號、16 碼應用程式密碼與收件者信箱，精靈會自動執行即時 SMTP 連線與認證驗證。
+- **方式 B（直接編輯 .env）**：
+  ```ini
+  ENABLE_EMAIL=true
+  SMTP_HOST=smtp.gmail.com
+  SMTP_PORT=587
+  SMTP_USER=your_name@gmail.com
+  SMTP_PASSWORD=abcdefghijklmnop
+  SMTP_USE_TLS=true
+  EMAIL_FROM=your_name@gmail.com
+  EMAIL_FROM_NAME=PTT 智慧追蹤機器人
+  EMAIL_TO=recipient1@gmail.com, recipient2@example.com
+  ```
+
+#### 步驟 3：多收件人支援與排版特色
+- **多收件人分發**：`EMAIL_TO` 支援使用逗號或分號分隔多組信箱，系統會自動解析 RFC 5322 格式並進行重複項過濾。
+- **響應式 HTML 卡片**：採用標準 MIME `multipart/alternative` 架構，在支援 HTML 之郵件客戶端呈現精美卡片（包含看板標籤、商品標題超連結、作者、價格高亮標籤與重點摘錄）；在純文字環境則自動降級顯示清晰文字。
+- **安全防護架構**：
+  - **防禦標頭注入 (Anti-Header Injection)**：自動清理信件主旨與收寄件人標頭中的換行符號（`\r`, `\n`），防止 SMTP 指令遭惡意竄改。
+  - **防禦 XSS 攻擊**：PTT 文章標題、內文與作者資訊皆經嚴密之 `html.escape` 轉義處理，確保在各家 Webmail 與行動裝置客戶端安全顯示。
+- **非同步非阻塞運作**：透過標準函式庫 `smtplib` 與 `asyncio.to_thread` 調度至背景執行緒集區發信，完全不佔用主非同步事件迴圈，亦無需引入額外第三方套件。
+- **注意事項**：因電子郵件協定特性，信件一旦發送至收件匣即無法進行遠端原位修改（不支援售出自動劃線功能）。
+
+</details>
+
+<details>
+<summary><b>[說明] LINE 平台可行性與限制深度分析</b></summary>
+<br>
+
+許多使用者詢問為何本專案現階段未優先實作 LINE 平台推播，以下說明關鍵技術與成本限制：
+
+#### 1. LINE Notify 服務正式終止 (2025/03/31)
+- LINE 官方已於 **2025 年 3 月 31 日** 全面終止 LINE Notify 服務。
+- 所有歷史 Access Token 及 `https://notify-api.line.me/api/notify` API 端點已全面失效（HTTP 410 Gone）。過往免費、免伺服器、無限推播之簡易整合管道已不復存在。
+
+#### 2. LINE Messaging API 免費額度與高額成本障礙
+- **每月僅 200 則免費主動推播**：LINE 官方帳號免費方案每月僅提供 200 則主動發送額度（`pushMessage` / `multicast`）。
+- **高頻監控迅速耗盡**：PTT 熱門看板（如 HardwareSale、MacShop、Lifeismoney）單日命中文章數常達 10~20 篇。單人使用下，整月額度通常在第 10~15 天即告用罄；若有 3 位以上訂閱者，數日內即全面中斷。
+- **超額直接封鎖與付費門檻**：免費方案一旦達 200 則上限，後續所有推播直接中斷（拋出 HTTP 429 錯誤），直到次月 1 號重置。若欲升級付費方案，中用量方案約 NT$800/月（5,000 則），高用量方案約 NT$1,200/月（30,000 則）。對於開源自架專案而言，此每月固定支出違背零成本初衷。
+
+#### 3. 缺乏長輪詢與強制要求公開 HTTPS Webhook
+- LINE Messaging API **不支援出站長輪詢 (Long Polling)** 或 WebSocket 連線。
+- 若要支援雙向指令互動，必須架設公網可存取、具備合法 CA SSL 憑證之 HTTPS Webhook 伺服器。
+- 家用網路環境（浮動 IP、NAT 防火牆）的使用者必須自行設定 DDNS、路由器連接埠轉發（Port Forwarding）或仰賴付費穿透服務（如 ngrok），架設與維護複雜度極高。
+
+#### 4. 因應建議與替代方案
+本專案建議使用者採用以下兩大零成本替代方案：
+- **推薦方案 A：Telegram Bot**。完全免費、無每月推播上限、出站長輪詢免公網 IP、支援行內按鈕與商品售出動態原位劃線更新。
+- **推薦方案 B：Email (SMTP)**。使用個人 Gmail 應用程式密碼即可免費發信（每日約 500 封），支援跨裝置精美 HTML 郵件卡片。
+
+</details>
 
 ---
 
@@ -389,14 +528,29 @@ bash restart_bg.sh
 
 | 變數名稱 | 必填 | 預設值 | 說明 |
 | :--- | :---: | :--- | :--- |
-| `DISCORD_TOKEN` | 是 | 無 | Discord Bot 認證 Token |
-| `GROQ_API_KEY` | 是 | 無 | Groq Cloud API 金鑰（用於自然語言對話與售出語意審核） |
-| `DEFAULT_CHANNEL_ID` | 否 | 空 | 預設推播頻道 ID（建議直接於頻道使用 `/setup` 綁定） |
-| `DEFAULT_GUILD_ID` | 否 | 空 | 主伺服器 ID（擁有較高配額階層） |
-| `OWNER_USER_ID` | 否 | 空 | 管理員 Discord User ID（留空時自動從 Bot Application 解析） |
+| `BOT_LANGUAGE` | 否 | `zh_TW` | 機器人語言偏好設定（`zh_TW` 繁體中文 / `en` 英文） |
 | `DEFAULT_BOARD` | 否 | `HardwareSale` | 預設監控看板名稱 |
 | `POLL_INTERVAL_MIN` | 否 | `90` | 背景巡檢最小間隔秒數 |
 | `POLL_INTERVAL_MAX` | 否 | `150` | 背景巡檢最大間隔秒數（隨機抖動避免固定頻率請求） |
+| `ENABLE_DISCORD` | 否 | `true` | 是否啟用 Discord 推播平台 |
+| `DISCORD_TOKEN` | 條件必填 | 無 | Discord Bot 認證 Token（啟用 Discord 時必填） |
+| `DEFAULT_CHANNEL_ID` | 否 | 空 | 預設 Discord 推播頻道 ID（亦可於頻道使用 `/setup` 綁定） |
+| `DEFAULT_GUILD_ID` | 否 | 空 | 主伺服器 ID（擁有較高配額階層） |
+| `OWNER_USER_ID` | 否 | 空 | 管理員 Discord User ID（留空時自動從 Bot Application 解析） |
+| `ENABLE_TELEGRAM` | 否 | `false` | 是否啟用 Telegram Bot 推播平台 |
+| `TELEGRAM_BOT_TOKEN` | 條件必填 | 空 | Telegram Bot HTTP API Token（啟用 Telegram 時必填） |
+| `TELEGRAM_CHAT_ID` | 條件必填 | 空 | 預設 Telegram 推播目標 Chat ID（個人 ID、群組負數 ID 或 `@channel`） |
+| `TELEGRAM_ADMIN_USER_ID` | 否 | 空 | Telegram 管理員 User ID |
+| `ENABLE_EMAIL` | 否 | `false` | 是否啟用 Email SMTP 郵件推播平台 |
+| `SMTP_HOST` | 條件必填 | `smtp.gmail.com` | SMTP 伺服器主機位址（啟用 Email 時必填） |
+| `SMTP_PORT` | 否 | `587` | SMTP 伺服器連接埠（STARTTLS 預設 587，SSL 預設 465） |
+| `SMTP_USER` | 條件必填 | 空 | SMTP 認證帳號 / Gmail 帳號（啟用 Email 時必填） |
+| `SMTP_PASSWORD` | 條件必填 | 空 | SMTP 認證密碼 / Gmail 16 碼應用程式密碼（啟用 Email 時必填） |
+| `SMTP_USE_TLS` | 否 | `true` | 是否啟用 STARTTLS 加密通道（Port 465 時建議設為 false 採 SSL） |
+| `EMAIL_FROM` | 否 | 同 `SMTP_USER` | 寄件者電子郵件地址 |
+| `EMAIL_FROM_NAME` | 否 | `PTT 智慧追蹤機器人` | 寄件者顯示名稱 |
+| `EMAIL_TO` | 條件必填 | 空 | 收件者電子郵件地址（支援逗號分隔多組信箱，啟用 Email 時必填） |
+| `GROQ_API_KEY` | 否 | 無 | Groq Cloud API 金鑰（用於自然語言對話與售出語意審核，選填） |
 | `GROQ_MODEL` | 否 | `openai/gpt-oss-120b` | 主力語意分析模型 |
 | `GROQ_FAST_MODEL` | 否 | `openai/gpt-oss-20b` | 輕量快速初篩模型 |
 | `DB_PATH` | 否 | `bot_data.db` | SQLite 資料庫路徑（Docker 容器內預設為 `/app/data/bot_data.db`） |
@@ -410,19 +564,24 @@ bash restart_bg.sh
 
 ```text
 ptt-dc-bot/
-├── bot.py                  # Discord Client 主程式、/setup 視覺化面板與 25 組指令
-├── setup_wizard.py         # 零依賴互動式 CLI 設定精靈（標準庫實作，Token 驗證與邀請連結計算）
+├── bot.py                  # Discord Client 主程式、/setup 視覺化面板與協調器
+├── telegram_bot.py         # Telegram Client 主程式、長輪詢迴圈與雙向指令模組
+├── email_notifier.py       # Email SMTP 非阻塞非同步郵件推播供應商模組
+├── delivery.py             # 抽象 NotificationProvider 與多平台 DeliveryDispatcher
+├── setup_wizard.py         # 多平台零依賴互動式 CLI 設定精靈（標準庫實作）
 ├── install.sh              # Linux / macOS 一鍵安裝與設定腳本
 ├── install.ps1             # Windows PowerShell 一鍵安裝腳本
 ├── start_windows.bat       # Windows 雙擊啟動器（含 10 秒自動重啟守護）
 ├── start_mac.command       # macOS 雙擊啟動器
-├── config.py               # 環境變數載入、租戶配額常數與輸入過濾規則
-├── storage.py              # SQLite WAL 多租戶資料庫、Schema 自動遷移與原子備份
+├── config.py               # 多平台環境變數載入、租戶配額常數與輸入過濾規則
+├── storage.py              # SQLite WAL 多租戶資料庫 (Schema v4)、平台欄位支援
 ├── ptt_crawler.py          # 非同步 PTT 爬蟲、雙層售出判定與多品項獨立視角切分
 ├── groq_scheduler.py       # Groq API 優先級佇列（P0~P3）與三模型動態負載池
 ├── groq_agent.py           # ReAct AI 代理、工具調用、權限門禁與 Prompt Injection 防護
-├── delivery.py             # 跨頻道/私訊推播分發器、3 天去重雜湊與 18h 售出原位更新
 ├── embeds.py               # Discord Embed 卡片建構、字數邊界截斷與防搶翻頁按鈕
+├── docs/
+│   ├── MULTI_PLATFORM_FEASIBILITY.md # LINE, Telegram, Email 多平台調研評估報告
+│   └── RELEASE_NOTES_v1.0.0.md       # v1.0.0 正式版 Release Notes
 ├── Dockerfile              # Python 3.11-slim 輕量容器映像檔定義（以非 root botuser 運行）
 ├── docker-compose.yml      # 容器編排（支援 GHCR 預建映像檔與本地編譯雙模式）
 ├── .dockerignore           # 26 組排除規則，杜絕金鑰、日誌與快取被打包至映像檔
@@ -434,7 +593,8 @@ ptt-dc-bot/
 1. **聚合活躍看板**：僅輪詢具備有效訂閱規則的看板，無規則看板自動略過。
 2. **單次爬取共享**：每個看板每輪僅發送一次 HTTP 請求，內文快取（10 分鐘）與 AI 判定快取（60 分鐘）全租戶共享，徹底避免高頻請求引發 PTT 503 限流。
 3. **多品項視角切分**：透過 `apply_keyword_view` 為合售文中的不同關鍵字建立虛擬品項視角，獨立計算售價與個別售出狀態。
-4. **18h 原位追蹤**：背景以 Fair Round-Robin 輪詢過去 18 小時內推播過的文章，一旦作者推文或標題標註售出，立即原位編輯 Discord 通知卡片。
+4. **多平台解耦派發**：透過 `DeliveryDispatcher` 將匹配的文章分發至已註冊之各平台 Provider（Discord、Telegram、Email），彼此隔離不互相阻塞。
+5. **18h 原位追蹤**：背景輪詢過去 18 小時內推播過的文章，一旦作者推文或標題標註售出，立即於 Discord 與 Telegram 原位編輯通知訊息加上刪除線。
 
 </details>
 
