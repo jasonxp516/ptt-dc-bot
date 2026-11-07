@@ -35,32 +35,32 @@ PTT_BOARD_DIRECTORY = [
     {
         "name": "nb-shopping",
         "zh_name": "筆記型電腦二手買賣與討論板",
-        "tags": "筆電 二手筆電 電競筆電 文書筆電 Laptop Notebook ThinkPad ROG 買賣",
+        "tags": "筆電 二手筆電 電競筆電 文書筆電 Laptop Notebook ThinkPad ROG Zephyrus ZenBook VivoBook TUF Legion Gram Surface 買賣",
     },
     {
         "name": "MacShop",
         "zh_name": "蘋果二手產品交易板",
-        "tags": "Apple Mac MacBook Pro Air iPhone iPad AppleWatch AirPods Mac mini 二手買賣",
+        "tags": "Apple Mac MacBook Pro Air iPhone iPad AppleWatch AirPods Mac mini Mac Studio HomePod Apple Pencil 二手買賣 蘋果",
     },
     {
         "name": "mobilesales",
         "zh_name": "手機二手交易板",
-        "tags": "手機 二手手機 iPhone Samsung Pixel 小米 Android 智慧型手機買賣",
+        "tags": "手機 二手手機 iPhone Samsung Galaxy S23 S24 Pixel 小米 RedMi POCO vivo OPPO Sony Xperia ROG Phone Zenfone Android 智慧型手機買賣",
     },
     {
         "name": "Gamesale",
         "zh_name": "電玩遊戲二手交易板",
-        "tags": "PS5 PS4 Switch NSwitch Xbox Steam Deck 遊戲片 主機 手把 電玩二手買賣",
+        "tags": "PS5 PS4 Switch NSwitch Xbox Steam Deck ROG Ally 遊戲片 卡帶 主機 手把 Joy-Con 薩爾達 瑪利歐 寶可夢 魔物獵人 電玩二手買賣",
     },
     {
         "name": "DC_Sale",
         "zh_name": "數位相機與攝影器材二手買賣板",
-        "tags": "相機 單眼 微單 鏡頭 Sony Canon Nikon 富士 GoPro 攝影器材二手買賣",
+        "tags": "相機 單眼 微單 鏡頭 Sony Canon Nikon 富士 Fujifilm Ricoh GR3 GRIII Leica Sigma Tamron GoPro Insta360 DJI Neo Mavic Mini Air Avata Osmo Pocket Action 空拍機 無人機 航拍機 運動相機 全景相機 穩定器 三軸 雲台 閃光燈 攝影器材二手買賣",
     },
     {
         "name": "Headphone",
         "zh_name": "耳機與隨身音訊討論/交易板",
-        "tags": "耳機 耳道 耳罩 DAC 耳擴 藍牙耳機 音響 音訊",
+        "tags": "耳機 耳道 耳罩 真無線 DAC 耳擴 一體機 藍牙耳機 音響 音訊 Sony WH-1000XM5 WF-1000XM5 Sennheiser 鐵三角 Bose",
     },
     {
         "name": "Audiophile",
@@ -195,6 +195,238 @@ PTT_BOARD_DIRECTORY = [
 ]
 
 COMMON_BOARDS_MAP = {item["name"].lower(): item["name"] for item in PTT_BOARD_DIRECTORY}
+
+BOARD_ALIASES_MAP: Dict[str, str] = {
+    # HardwareSale
+    "電蝦": "HardwareSale",
+    "電蝦二手": "HardwareSale",
+    "硬體": "HardwareSale",
+    "硬體買賣": "HardwareSale",
+    "電腦硬體": "HardwareSale",
+    "電腦零件": "HardwareSale",
+    "顯卡": "HardwareSale",
+    "顯示卡": "HardwareSale",
+    "hs": "HardwareSale",
+    "hardwaresale": "HardwareSale",
+    # DC_Sale
+    "相機": "DC_Sale",
+    "二手相機": "DC_Sale",
+    "數位相機": "DC_Sale",
+    "攝影": "DC_Sale",
+    "攝影器材": "DC_Sale",
+    "鏡頭": "DC_Sale",
+    "單眼": "DC_Sale",
+    "微單": "DC_Sale",
+    "空拍機": "DC_Sale",
+    "無人機": "DC_Sale",
+    "航拍機": "DC_Sale",
+    "運動相機": "DC_Sale",
+    "dji": "DC_Sale",
+    "gopro": "DC_Sale",
+    "insta360": "DC_Sale",
+    "dc": "DC_Sale",
+    "dcsale": "DC_Sale",
+    "dc_sale": "DC_Sale",
+    "dc-sale": "DC_Sale",
+    # nb-shopping
+    "筆電": "nb-shopping",
+    "二手筆電": "nb-shopping",
+    "筆記型電腦": "nb-shopping",
+    "筆電買賣": "nb-shopping",
+    "筆電交易": "nb-shopping",
+    "nb": "nb-shopping",
+    "nbshopping": "nb-shopping",
+    "nb_shopping": "nb-shopping",
+    "nb-shopping": "nb-shopping",
+    # MacShop
+    "蘋果": "MacShop",
+    "蘋果二手": "MacShop",
+    "二手蘋果": "MacShop",
+    "apple": "MacShop",
+    "mac": "MacShop",
+    "macbook": "MacShop",
+    "ipad": "MacShop",
+    "macshop": "MacShop",
+    "mac_shop": "MacShop",
+    "mac-shop": "MacShop",
+    # Gamesale
+    "遊戲": "Gamesale",
+    "電玩": "Gamesale",
+    "二手遊戲": "Gamesale",
+    "遊戲買賣": "Gamesale",
+    "遊戲交易": "Gamesale",
+    "遊戲片": "Gamesale",
+    "switch": "Gamesale",
+    "ps5": "Gamesale",
+    "gs": "Gamesale",
+    "gamesale": "Gamesale",
+    "game_sale": "Gamesale",
+    "game-sale": "Gamesale",
+    # mobilesales
+    "手機": "mobilesales",
+    "二手手機": "mobilesales",
+    "手機買賣": "mobilesales",
+    "手機交易": "mobilesales",
+    "ms": "mobilesales",
+    "mobilesale": "mobilesales",
+    "mobilesales": "mobilesales",
+    "mobile_sales": "mobilesales",
+    # Headphone
+    "耳機": "Headphone",
+    "二手耳機": "Headphone",
+    "耳機買賣": "Headphone",
+    "耳擴": "Headphone",
+    "headphone": "Headphone",
+    "headphones": "Headphone",
+    # Other common boards
+    "省錢": "Lifeismoney",
+    "省錢板": "Lifeismoney",
+    "跳蚤": "forsale",
+    "跳蚤市場": "forsale",
+    "鍵鼠": "Key_Mou_Pad",
+    "鍵盤": "Key_Mou_Pad",
+    "螢幕": "LCD",
+    "音響": "Audiophile",
+    "八卦": "Gossiping",
+    "股板": "Stock",
+    "股票": "Stock",
+    "希洽": "C_Chat",
+}
+
+COMMON_BOARDS_MAP.update(BOARD_ALIASES_MAP)
+
+
+def resolve_board_alias(board_input: str) -> str:
+    """
+    Resolve user-supplied board name, Chinese alias, or autocomplete display string
+    (e.g. 'DC_Sale — 數位相機與攝影器材二手買賣板' or '相機') into a canonical PTT board name.
+    """
+    if not board_input:
+        return "HardwareSale"
+    raw = board_input.strip()
+    if not raw:
+        return "HardwareSale"
+    if raw.upper() == "ALL":
+        return "ALL"
+    # If the user selected or pasted an autocomplete label like "DC_Sale — 數位相機..." or "DC_Sale (數位相機...)"
+    for sep in (" — ", " - ", " (", "（", " ["):
+        if sep in raw:
+            head = raw.split(sep, 1)[0].strip()
+            if head:
+                raw = head
+                break
+    lower = raw.lower()
+    if lower in COMMON_BOARDS_MAP:
+        return COMMON_BOARDS_MAP[lower]
+    # Also check if input matches any zh_name substring in PTT_BOARD_DIRECTORY
+    for item in PTT_BOARD_DIRECTORY:
+        if lower == item["zh_name"].lower():
+            return item["name"]
+    return raw
+
+
+_CATEGORY_INFERENCE_RULES: List[Tuple[str, re.Pattern]] = [
+    (
+        "DC_Sale",
+        re.compile(
+            r"(?:\bdji\b|\bneo\b|\bmavic\b|\bavata\b|\bosmo\b|\bpocket\s*[123]?\b|\baction\s*[2345]?\b"
+            r"|\binsta\s*360\b|\bgopro\b|空拍機|無人機|航拍機|運動相機|全景相機|穩定器|三軸雲台|手持雲台"
+            r"|數位相機|單眼|微單|無反|鏡頭|變焦鏡|定焦鏡|閃光燈|防潮箱|記憶卡\s*cf|攝影器材"
+            r"|\ba7c2?\b|\ba7m[234]\b|\ba7r[2345]\b|\ba7s3?\b|\ba6[0-9]{3}\b|\bzv[\-\s]?e?10\b|\bzv[\-\s]?1\b"
+            r"|\brx100\b|\bfx30?\b|\bx100v?i?\b|\bx[\-\s]?t[345]0?\b|\bx[\-\s]?s[12]0\b"
+            r"|\bgr3x?\b|\bgriii?x?\b|\bleica\b|徠卡|哈蘇|\bsigma\b|適馬|\btamron\b|騰龍"
+            r"|\bcanon\s*(?:rf|ef|eos|r[5678]|r10|r50)\b|\bnikon\s*(?:z[fc56789]|z30|z50|z6ii|z7ii|z8|z9)\b"
+            r"|\blumix\b|\bolympus\b|\bom[\-\s]?[15]\b|相機)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "MacShop",
+        re.compile(
+            r"(?:\bmacbook\b|\bmac\s*mini\b|\bmac\s*studio\b|\bmac\s*pro\b|\bimac\b"
+            r"|\bipad\b|\bapple\s*watch\b|\bairpods\b|\bapple\s*pencil\b|\bhomepod\b"
+            r"|\bstudio\s*display\b|巧控鍵盤|巧控板|巧控滑鼠|\bm[1234]\s*(?:pro|max|ultra)\b)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Gamesale",
+        re.compile(
+            r"(?:\bps5\b|\bps4\b|\bswitch\b|\bnswitch\b|\bxbox\b|\bsteam\s*deck\b|\bsteamdeck\b"
+            r"|\brog\s*ally\b|\blegion\s*go\b|遊戲片|遊戲卡帶|實體片|二手片|joy[\-\s]?con|pro\s*手把"
+            r"|薩爾達|瑪利歐|寶可夢|魔物獵人|艾爾登法環|黑神話|劍星|斯普拉遁|動森|動物森友會|電玩主機)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "nb-shopping",
+        re.compile(
+            r"(?:二手筆電|電競筆電|文書筆電|筆記型電腦|筆電|\blaptop\b|\bnotebook\b"
+            r"|\bthinkpad\b|\bzenbook\b|\bvivobook\b|\bzephyrus\b|西風之神|\btuf\s*gaming\b"
+            r"|\bideapad\b|\blegion\s*[57]\b|\blg\s*gram\b|\bsurface\s*(?:pro|laptop|go)\b)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "mobilesales",
+        re.compile(
+            r"(?:二手手機|智慧型手機|安卓手機|\bgalaxy\s*s2[1234]\b|\bs2[234]\s*ultra\b"
+            r"|\bz\s*fold\b|\bz\s*flip\b|\bpixel\s*[6789]\b|\bxperia\s*[15]\b|\brog\s*phone\b"
+            r"|\bzenfone\b|紅米|\bredmi\b|\bpoco\b|\bvivo\s*x[0-9]+\b|\bfind\s*x[0-9]+\b|\biphone\b|手機)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Headphone",
+        re.compile(
+            r"(?:耳機|耳道|耳罩|真無線|藍牙耳機|耳擴|隨身耳擴|\bdac\b|隨身聽|\bdap\b"
+            r"|\bwh[\-\s]?1000xm[345]\b|\bwf[\-\s]?1000xm[345]\b|\bsennheiser\b|森海塞爾"
+            r"|鐵三角|\baudio[\-\s]?technica\b|\bbose\s*qc\b|\bie[2369]00\b|\bhd[68][056]0s?\b)",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+def infer_board_from_query(text: str, default_board: str = "HardwareSale") -> str:
+    """
+    Infer the most appropriate PTT second-hand trading board from a keyword or natural language prompt.
+    Ignores negative exclusion tokens (e.g. '-筆電' in '3060 -ti -筆電') so PC hardware exclusions
+    do not falsely route to nb-shopping.
+    """
+    if not text:
+        return default_board
+
+    # Remove negative exclusion tokens (starting with '-') before matching
+    tokens = [t for t in text.strip().split() if not t.startswith("-")]
+    clean_text = " ".join(tokens) if tokens else text.strip()
+    clean_lower = clean_text.lower()
+
+    # 1. Check if an explicit board name from PTT_BOARD_DIRECTORY is mentioned in clean_text
+    for item in PTT_BOARD_DIRECTORY:
+        b_lower = item["name"].lower()
+        if re.search(rf"(?<![a-z0-9]){re.escape(b_lower)}(?![a-z0-9])", clean_lower):
+            return item["name"]
+
+    # 2. Check if clean_text is an exact alias
+    if clean_lower in BOARD_ALIASES_MAP:
+        return BOARD_ALIASES_MAP[clean_lower]
+
+    # 3. Check PC Hardware indicators first if both GPU/CPU and something else appear
+    if re.search(
+        r"(?:\brtx\s*\d{4}|\bgtx\s*\d{3,4}|\brx\s*\d{4}|\b\d{4}\s*ti\b|\b\d{4}\s*xt\b"
+        r"|顯卡|顯示卡|主機板|處理器|\bcpu\b|\bgpu\b|\bddr[45]\b|電供|電源供應器|水冷|塔散)",
+        clean_lower,
+        re.IGNORECASE,
+    ):
+        return "HardwareSale"
+
+    # 4. Evaluate category inference patterns in priority order
+    for target_board, pattern in _CATEGORY_INFERENCE_RULES:
+        if pattern.search(clean_text):
+            return target_board
+
+    return default_board
 
 # Fix B5 & P1-4: Split sold markers into STRONG (unambiguous, immediate exclude, without '暫定') vs TITLE_SOLD_REGEX
 STRONG_SOLD_REGEX = re.compile(
@@ -463,9 +695,9 @@ class PTTCrawler:
                 return 0, None
 
     async def verify_board(self, board_input: str) -> Tuple[bool, str, str]:
-        board_input = board_input.strip()
+        board_input = resolve_board_alias(board_input.strip())
         if not is_valid_board_name(board_input):
-            return False, board_input, f"看板名稱 `{board_input}` 格式不合法（僅允許英數字、底線與連字號）"
+            return False, board_input, f"看板名稱 `{board_input}` 格式不合法（僅允許英數字、底線與連字號，或輸入常見中文別名如「相機」、「筆電」、「蘋果」）"
         candidates = []
         if board_input.lower() in COMMON_BOARDS_MAP:
             candidates.append(COMMON_BOARDS_MAP[board_input.lower()])
@@ -482,8 +714,9 @@ class PTTCrawler:
                 if board_link and board_link.get("href"):
                     m = re.search(r"/bbs/([^/]+)/index\.html", board_link["href"])
                     if m:
-                        return True, m.group(1), "驗證成功"
-                return True, candidate, "驗證成功"
+                        found_board = m.group(1)
+                        return True, COMMON_BOARDS_MAP.get(found_board.lower(), found_board), "驗證成功"
+                return True, COMMON_BOARDS_MAP.get(candidate.lower(), candidate), "驗證成功"
             elif status in (429, 403, 503):
                 return False, board_input, f"PTT 伺服器忙碌或觸發防封鎖保護 (HTTP {status})，請稍後再試"
 
@@ -910,16 +1143,28 @@ class PTTCrawler:
                 else cleaned_body_with_notes
             )
 
-            # Extract ALL raw price lines (keyword-agnostic for cache purity, Fix P1-1)
+            # Extract ALL raw price lines (keyword-agnostic for cache purity, Fix P1-1; supports HardwareSale, DC_Sale, MacShop, Gamesale, etc.)
             for idx, ln in enumerate(lines):
-                if re.search(r"(?:◎?\s*\[?欲售價格\]?|售價|欲售金額)", ln, re.IGNORECASE):
-                    after_colon = re.sub(r"^.*?(?:欲售價格\]?|售價|欲售金額)\s*[:：]?\s*", "", ln).strip()
+                if re.search(
+                    r"(?:◎?\s*[\[\[【]?\s*(?:欲售價格|物品售價|商品售價|商品價格|欲售金額|售\s*價|價\s*格)\s*[\]】]?)",
+                    ln,
+                    re.IGNORECASE,
+                ):
+                    after_colon = re.sub(
+                        r"^.*?(?:欲售價格|物品售價|商品售價|商品價格|欲售金額|售\s*價|價\s*格)\s*[\]】]?\s*[:：]?\s*",
+                        "",
+                        ln,
+                    ).strip()
                     price_lines = []
                     if after_colon and "沒有明確價格" not in after_colon:
                         price_lines.append(after_colon)
                     for sub_ln in lines[idx + 1 : idx + 6]:
-                        if sub_ln.startswith("◎") or re.match(
-                            r"^\[?(?:品樣狀況|實物照片|保固證明|交易方式|交易地區|聯絡方式)", sub_ln
+                        if (
+                            sub_ln.startswith(("◎", "★", "【"))
+                            or re.match(
+                                r"^[\[\[【]?(?:品樣狀況|實物照片|保固證明|詳細說明|交易方式|交易地區|交易地點|連絡方式|聯絡方式|商品照|照片|拍賣連結|其他說明)",
+                                sub_ln,
+                            )
                         ):
                             break
                         if "沒有明確價格" in sub_ln or "水桶" in sub_ln:
@@ -932,13 +1177,22 @@ class PTTCrawler:
 
             # Extract Location / Trading method
             for idx, ln in enumerate(lines):
-                if re.search(r"(?:◎?\s*\[?交易方式|交易地點|交易地區|面交地點)", ln, re.IGNORECASE):
+                if re.search(
+                    r"(?:◎?\s*[\[\[【]?\s*(?:交易方式|交易地點|交易地區|面交地點)\s*[\]】]?)",
+                    ln,
+                    re.IGNORECASE,
+                ):
                     after_colon = re.sub(
-                        r"^.*?(?:交易方式(?:、地區)?\]?|交易地點|交易地區|面交地點)\s*[:：]?\s*", "", ln
+                        r"^.*?(?:交易方式(?:、地區)?|交易地點|交易地區|面交地點)\s*[\]】]?\s*[:：]?\s*",
+                        "",
+                        ln,
                     ).strip()
                     if after_colon and not after_colon.startswith("("):
                         result["extracted_location"] = after_colon[:80]
-                    elif idx + 1 < len(lines) and not lines[idx + 1].startswith("◎"):
+                    elif (
+                        idx + 1 < len(lines)
+                        and not lines[idx + 1].startswith(("◎", "★", "【", "["))
+                    ):
                         result["extracted_location"] = lines[idx + 1][:80]
                     break
 

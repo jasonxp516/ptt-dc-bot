@@ -48,7 +48,14 @@ from embeds import (
 )
 from groq_agent import GroqAgent
 from groq_scheduler import GroqScheduler, P1_REALTIME
-from ptt_crawler import COMMON_BOARDS_MAP, PTTCrawler
+from ptt_crawler import (
+    COMMON_BOARDS_MAP,
+    PTT_BOARD_DIRECTORY,
+    PTTCrawler,
+    infer_board_from_query,
+    is_valid_board_name,
+    resolve_board_alias,
+)
 from storage import BotStorage, extract_first_price_int
 
 # Enforce secure umask for all created database and log files (V-02 / CWE-732 mitigation)
@@ -943,15 +950,107 @@ def resolve_interaction_subscriber(
 # =====================================================================
 # Autocomplete Helpers (Tenant-Scoped & Read-Only! Fix P2-3)
 # =====================================================================
+_BOARD_DIR_MAP: Dict[str, Dict[str, str]] = {
+    item["name"].lower(): item for item in PTT_BOARD_DIRECTORY
+}
+
+
+def _build_ptt_board_choices(
+    current: str, include_all_option: bool = False
+) -> List[app_commands.Choice[str]]:
+    q = (current or "").strip()
+    q_lower = q.lower()
+    resolved_alias = resolve_board_alias(q).lower() if q else ""
+
+    tracked_set = {b["name"].lower(): b["name"] for b in bot.storage.get_boards()}
+    choices: List[app_commands.Choice[str]] = []
+    seen_values = set()
+
+    if include_all_option:
+        all_label = "ALL — 不限看板 (套用至所有監控看板)"
+        if not q_lower or q_lower in ("all", "全部", "不限", "所有"):
+            choices.append(app_commands.Choice(name=all_label, value="ALL"))
+            seen_values.add("all")
+
+    # 1. Tracked boards first, then popular directory boards
+    ordered_items: List[Dict[str, str]] = []
+    for t_lower, t_name in tracked_set.items():
+        if t_lower in _BOARD_DIR_MAP:
+            ordered_items.append(_BOARD_DIR_MAP[t_lower])
+        else:
+            ordered_items.append(
+                {"name": t_name, "zh_name": "目前已監控看板", "tags": t_name}
+            )
+    for item in PTT_BOARD_DIRECTORY:
+        if item["name"].lower() not in tracked_set:
+            ordered_items.append(item)
+
+    for item in ordered_items:
+        b_name = item["name"]
+        b_lower = b_name.lower()
+        if b_lower in seen_values:
+            continue
+        zh_name = item.get("zh_name", "")
+        tags = item.get("tags", "")
+        haystack = f"{b_name} {zh_name} {tags}".lower()
+
+        if (
+            not q_lower
+            or q_lower in haystack
+            or (resolved_alias and resolved_alias == b_lower)
+        ):
+            status_tag = " [已監控]" if b_lower in tracked_set else ""
+            display = f"{b_name} — {zh_name}{status_tag}"[:100]
+            choices.append(app_commands.Choice(name=display, value=b_name))
+            seen_values.add(b_lower)
+
+    # If user typed a custom valid board name not yet in choices, offer it directly
+    if q and is_valid_board_name(q) and q_lower not in seen_values:
+        choices.insert(
+            0,
+            app_commands.Choice(
+                name=f"{q} — 自訂 PTT 看板名稱"[:100], value=q
+            ),
+        )
+
+    return choices[:25]
+
+
 async def board_autocomplete(
     interaction: discord.Interaction, current: str
 ) -> List[app_commands.Choice[str]]:
     boards = bot.storage.get_boards()
+    q = (current or "").strip()
+    q_lower = q.lower()
+    resolved_alias = resolve_board_alias(q).lower() if q else ""
     choices = []
     for b in boards:
-        if current.lower() in b["name"].lower():
-            choices.append(app_commands.Choice(name=b["name"], value=b["name"]))
+        b_name = b["name"]
+        b_lower = b_name.lower()
+        dir_info = _BOARD_DIR_MAP.get(b_lower)
+        zh_name = dir_info["zh_name"] if dir_info else "已監控看板"
+        tags = dir_info["tags"] if dir_info else ""
+        haystack = f"{b_name} {zh_name} {tags}".lower()
+        if (
+            not q_lower
+            or q_lower in haystack
+            or (resolved_alias and resolved_alias == b_lower)
+        ):
+            display = f"{b_name} — {zh_name}"[:100]
+            choices.append(app_commands.Choice(name=display, value=b_name))
     return choices[:25]
+
+
+async def ptt_board_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    return _build_ptt_board_choices(current, include_all_option=False)
+
+
+async def ptt_board_with_all_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    return _build_ptt_board_choices(current, include_all_option=True)
 
 
 async def keyword_autocomplete(
@@ -1021,11 +1120,16 @@ async def fuzzy_autocomplete(
 # =====================================================================
 
 POPULAR_BOARDS = [
-    ("HardwareSale", "電蝦二手 (電腦零件/周邊)", None),
-    ("MacShop", "蘋果二手 (Apple 裝置/配件)", None),
-    ("nb-shopping", "筆電交易 (筆記型電腦/二手筆電)", None),
-    ("Gamesale", "遊戲交易 (遊戲片/主機周邊)", None),
-    ("MobileComm", "手機通訊 (智慧手機/通訊設備)", None),
+    ("HardwareSale", "電蝦二手 (電腦零件/顯示卡/周邊)", None),
+    ("DC_Sale", "數位相機二手 (相機/鏡頭/空拍機 DJI/GoPro)", None),
+    ("MacShop", "蘋果二手 (MacBook/iPad/AirPods/iPhone)", None),
+    ("nb-shopping", "筆電交易 (筆記型電腦/電競筆電/二手筆電)", None),
+    ("Gamesale", "遊戲交易 (Switch/PS5/遊戲片/主機周邊)", None),
+    ("mobilesales", "手機二手交易 (iPhone/Samsung/Pixel/安卓)", None),
+    ("Headphone", "耳機音訊交易 (耳機/DAC/耳擴/藍牙耳機)", None),
+    ("MobileComm", "手機通訊 (智慧手機/資費/通訊設備)", None),
+    ("forsale", "綜合跳蚤市場 (二手雜物/家電/票券)", None),
+    ("Lifeismoney", "省錢板 (特價情報/優惠折扣)", None),
 ]
 
 
@@ -1114,7 +1218,7 @@ class KeywordAddModal(discord.ui.Modal, title="新增追蹤關鍵字"):
         style=discord.TextStyle.short,
     )
     board = discord.ui.TextInput(
-        label="目標看板 (選填，留空預設 HardwareSale)",
+        label="目標看板 (可填中文如 相機/筆電/蘋果，留空依商品自動判斷)",
         default="HardwareSale",
         required=False,
         max_length=30,
@@ -1163,9 +1267,13 @@ class KeywordAddModal(discord.ui.Modal, title="新增追蹤關鍵字"):
             await interaction.response.send_message("[錯誤] 關鍵字不可為空。", ephemeral=True)
             return
 
-        # Canonicalize board name
-        if board_val.upper() != "ALL" and board_val.lower() in COMMON_BOARDS_MAP:
-            board_val = COMMON_BOARDS_MAP[board_val.lower()]
+        # Canonicalize board name (supports Chinese aliases like 相機 -> DC_Sale and auto-inference from keyword)
+        raw_board_val = board_val
+        board_val = resolve_board_alias(board_val)
+        if board_val == "HardwareSale" and not re.search(
+            r"(?:hardwaresale|電蝦|硬體)", raw_board_val, re.IGNORECASE
+        ):
+            board_val = infer_board_from_query(kw_val, default_board="HardwareSale")
 
         # Parse and validate max_price
         price_val: Optional[int] = None
@@ -1210,6 +1318,13 @@ class KeywordAddModal(discord.ui.Modal, title="新增追蹤關鍵字"):
             if err or not sub:
                 await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
                 return
+
+        if (
+            board_val.upper() != "ALL"
+            and board_val.lower() in _BOARD_DIR_MAP
+            and not bot_inst.storage.is_board_tracked(board_val)
+        ):
+            bot_inst.storage.add_board(board_val)
 
         ok, msg = bot_inst.storage.add_keyword(
             keyword=kw_val,
@@ -1680,11 +1795,12 @@ async def cmd_ai(
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
     keyword="要掃描的關鍵字（若不填，預設自動掃描您目前設定的所有追蹤關鍵字！）",
-    board="要掃描的 PTT 看板（預設 HardwareSale）",
+    board="要掃描的 PTT 看板（可直接點選清單，或輸入 相機/筆電/蘋果 等中文自動對應）",
     max_per_keyword="每個關鍵字最多回傳幾篇確定可買的近期文章（1~8，預設 5）",
     push_to_channel="是否同時將找到的未售出商品卡片推播到通知頻道/私訊（預設 False）",
     scope="若未填 keyword，要讀取哪裡的關鍵字清單（預設自動判斷）",
 )
+@app_commands.autocomplete(board=ptt_board_autocomplete)
 @app_commands.choices(scope=SCOPE_CHOICES)
 async def cmd_scan_unsold(
     interaction: discord.Interaction,
@@ -1712,8 +1828,14 @@ async def cmd_scan_unsold(
 
     await interaction.response.defer(ephemeral=False)
     try:
-        if board.lower() in COMMON_BOARDS_MAP:
-            board = COMMON_BOARDS_MAP[board.lower()]
+        raw_board = board
+        board = resolve_board_alias(board)
+        if (
+            board == "HardwareSale"
+            and keyword
+            and not re.search(r"(?:hardwaresale|電蝦|硬體)", raw_board, re.IGNORECASE)
+        ):
+            board = infer_board_from_query(keyword, default_board="HardwareSale")
 
         if keyword and keyword.strip():
             target_keywords = [
@@ -1848,11 +1970,12 @@ async def cmd_scan_unsold(
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
     description="自然語言描述你想追蹤的條件（AI 會在看到新文章時自動閱讀內文與價格替你判斷）",
-    board="目標看板（預設 HardwareSale）",
+    board="目標看板（可直接點選清單，或輸入 相機/筆電/蘋果 等中文，未填將依商品自動判斷）",
     category="限定分類（預設只看 [賣/...] 販售文）",
     hint_keywords="選填：快速初篩詞（用逗號分隔，如 3060,6700；留空則檢查該看板所有新販售文）",
     scope="選擇要新增至「個人專屬追蹤(私訊)」或「伺服器共用追蹤」",
 )
+@app_commands.autocomplete(board=ptt_board_with_all_autocomplete)
 @app_commands.choices(
     category=[
         app_commands.Choice(name="只看販售文 [賣/...]", value="賣"),
@@ -1878,8 +2001,12 @@ async def cmd_fuzzy_add(
 
     await interaction.response.defer(ephemeral=False)
 
-    if board.lower() in COMMON_BOARDS_MAP:
-        board = COMMON_BOARDS_MAP[board.lower()]
+    raw_board = board
+    board = resolve_board_alias(board)
+    if board == "HardwareSale" and not re.search(
+        r"(?:hardwaresale|電蝦|硬體)", raw_board, re.IGNORECASE
+    ):
+        board = infer_board_from_query(description, default_board="HardwareSale")
 
     # Fix P0-4: Verify board existence on PTT if not already tracked
     if board.upper() != "ALL" and not bot.storage.is_board_tracked(board):
@@ -2003,11 +2130,12 @@ async def cmd_fuzzy_list(interaction: discord.Interaction, scope: str = "auto"):
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
     keyword="要追蹤的關鍵字（空白分隔代表同時包含；加 - 代表排除，例如：3060 -ti -筆電）",
-    board="指定套用的看板（預設 HardwareSale）",
+    board="指定套用的看板（可直接點選清單，或輸入 相機/筆電/蘋果 等中文，未填將依商品自動判斷）",
     category="限定文章分類（預設只看 [賣/...] 販售文）",
     max_price="選填：最高預算上限（新台幣整數，例如 6500 代表只通知 ≤6500 元的商品）",
     scope="選擇要新增至「個人專屬追蹤(私訊)」或「伺服器共用追蹤」",
 )
+@app_commands.autocomplete(board=ptt_board_with_all_autocomplete)
 @app_commands.choices(
     category=[
         app_commands.Choice(name="只看販售文 [賣/...]", value="賣"),
@@ -2035,8 +2163,12 @@ async def cmd_keyword_add(
 
     await interaction.response.defer(ephemeral=False)
 
-    if board.upper() != "ALL" and board.lower() in COMMON_BOARDS_MAP:
-        board = COMMON_BOARDS_MAP[board.lower()]
+    raw_board = board
+    board = resolve_board_alias(board)
+    if board == "HardwareSale" and not re.search(
+        r"(?:hardwaresale|電蝦|硬體)", raw_board, re.IGNORECASE
+    ):
+        board = infer_board_from_query(keyword, default_board="HardwareSale")
 
     # Fix P0-4: Verify board on PTT before adding if not already tracked
     if board.upper() != "ALL" and not bot.storage.is_board_tracked(board):
@@ -2269,14 +2401,15 @@ async def cmd_keyword_clear(interaction: discord.Interaction, scope: str = "auto
 # =====================================================================
 @bot.tree.command(
     name="board_add",
-    description="新增要盯梢追蹤的 PTT 看板（例如 nb-shopping、MacShop、DC_Sale）",
+    description="新增要盯梢追蹤的 PTT 看板（支援下拉選單與中文別名如 相機、筆電、蘋果、電玩）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
-    board="PTT 看板英文名稱（或使用 /ai 讓 AI 幫你依主題尋找看板）",
+    board="直接從選單點選看板，或輸入中文關鍵字（如 相機、空拍機、筆電、蘋果）與英文板名",
     scope="選擇操作身分範圍（預設自動判斷）",
 )
+@app_commands.autocomplete(board=ptt_board_autocomplete)
 @app_commands.choices(scope=SCOPE_CHOICES)
 async def cmd_board_add(
     interaction: discord.Interaction, board: str, scope: str = "auto"
@@ -2360,6 +2493,7 @@ async def cmd_board_remove(
         await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
+    board = resolve_board_alias(board)
     # Remove this subscriber's rules on that board
     for kw in bot.storage.get_keywords(board=board, subscriber_id=sub["id"]):
         if kw["board"].lower() == board.lower():
@@ -2586,10 +2720,11 @@ SEARCH_COOLDOWN_SEC = 10.0
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(
-    keyword="要搜尋的關鍵字（例如：3060TI、6700XT）",
-    board="要搜尋的 PTT 看板（預設 HardwareSale）",
+    keyword="要搜尋的關鍵字（例如：3060TI、dji neo、MacBook）",
+    board="要搜尋的 PTT 看板（可直接點選清單，或輸入 相機/筆電/蘋果 等中文自動對應）",
     pages="搜尋頁數（1~2 頁，預設 1 頁）",
 )
+@app_commands.autocomplete(board=ptt_board_autocomplete)
 async def cmd_search(
     interaction: discord.Interaction,
     keyword: str,
@@ -2618,8 +2753,12 @@ async def cmd_search(
     try:
         await interaction.response.defer(ephemeral=False)
 
-        if board.lower() in COMMON_BOARDS_MAP:
-            board = COMMON_BOARDS_MAP[board.lower()]
+        raw_board = board
+        board = resolve_board_alias(board)
+        if board == "HardwareSale" and not re.search(
+            r"(?:hardwaresale|電蝦|硬體)", raw_board, re.IGNORECASE
+        ):
+            board = infer_board_from_query(keyword, default_board="HardwareSale")
 
         ok, articles, status_msg = await bot.crawler.search_board_by_ptt_query(
             board, keyword, max_pages=pages

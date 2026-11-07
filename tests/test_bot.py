@@ -9,6 +9,28 @@ VENV_SITE = "/tmp/test_venv/lib/python3.13/site-packages"
 if os.path.exists(VENV_SITE) and VENV_SITE not in sys.path:
     sys.path.insert(0, VENV_SITE)
 
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
+import config
+_MODULE_TMPDIR = None
+if not os.environ.get("LOG_PATH") or not os.environ.get("DB_PATH"):
+    _MODULE_TMPDIR = tempfile.TemporaryDirectory()
+    if not os.environ.get("LOG_PATH"):
+        config.LOG_PATH = os.path.join(_MODULE_TMPDIR.name, "bot.log")
+        os.environ["LOG_PATH"] = config.LOG_PATH
+    if not os.environ.get("DB_PATH"):
+        config.DB_PATH = os.path.join(_MODULE_TMPDIR.name, "bot_data.db")
+        os.environ["DB_PATH"] = config.DB_PATH
+
+
+def tearDownModule():
+    global _MODULE_TMPDIR
+    if _MODULE_TMPDIR is not None:
+        try:
+            _MODULE_TMPDIR.cleanup()
+        except Exception:
+            pass
+
 import discord
 
 from config import sanitize_user_input
@@ -482,6 +504,65 @@ class TestPTTBotUpgrades(unittest.TestCase):
                 )
             )
             self.assertIn("已達今日歷史未售出掃描次數上限", quota_step)
+            storage.close()
+
+    def test_smart_board_routing_aliases_and_autocomplete(self):
+        from bot import _build_ptt_board_choices
+        from ptt_crawler import infer_board_from_query, resolve_board_alias
+
+        self.assertEqual(infer_board_from_query("我想買 dji neo"), "DC_Sale")
+        self.assertEqual(infer_board_from_query("想收 Sony A7C2 鏡頭"), "DC_Sale")
+        self.assertEqual(infer_board_from_query("MacBook Air M3"), "MacShop")
+        self.assertEqual(infer_board_from_query("ThinkPad X1 二手筆電"), "nb-shopping")
+        self.assertEqual(infer_board_from_query("Switch 薩爾達"), "Gamesale")
+        self.assertEqual(infer_board_from_query("二手手機 S24 Ultra"), "mobilesales")
+        self.assertEqual(infer_board_from_query("WH-1000XM5 耳機"), "Headphone")
+        self.assertEqual(
+            infer_board_from_query("3060 -ti -筆電"), "HardwareSale"
+        )
+
+        self.assertEqual(resolve_board_alias("相機"), "DC_Sale")
+        self.assertEqual(resolve_board_alias("空拍機"), "DC_Sale")
+        self.assertEqual(resolve_board_alias("筆電"), "nb-shopping")
+        self.assertEqual(resolve_board_alias("蘋果"), "MacShop")
+        self.assertEqual(resolve_board_alias("電玩"), "Gamesale")
+        self.assertEqual(
+            resolve_board_alias(
+                "DC_Sale — 數位相機與攝影器材二手買賣板 [已監控]"
+            ),
+            "DC_Sale",
+        )
+
+        dji_choices = _build_ptt_board_choices("dji")
+        self.assertIsInstance(dji_choices, list)
+        self.assertTrue(any(choice.value == "DC_Sale" for choice in dji_choices))
+        all_choices = _build_ptt_board_choices("", include_all_option=True)
+        self.assertEqual(all_choices[0].value, "ALL")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "routing.db")
+            storage = BotStorage(db_path=db_path)
+            crawler = PTTCrawler(storage=storage)
+
+            async def _mock_verify(b_in):
+                return True, resolve_board_alias(b_in), "驗證成功"
+
+            crawler.verify_board = _mock_verify
+            agent = GroqAgent(api_key="test", storage=storage, crawler=crawler)
+            step_log, out_json, _ = asyncio.run(
+                agent._execute_tool(
+                    "add_exact_keyword",
+                    {"keyword": "dji neo"},
+                    subscriber_id=1,
+                    user_prompt="我想買 dji neo",
+                    read_untrusted_ptt=True,
+                    can_write=True,
+                )
+            )
+            self.assertIn("DC_Sale", step_log)
+            kws = storage.get_keywords(subscriber_id=1)
+            self.assertEqual(len(kws), 1)
+            self.assertEqual(kws[0]["board"], "DC_Sale")
             storage.close()
 
 
