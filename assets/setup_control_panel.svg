@@ -33,50 +33,50 @@
   <path d="M 66 52 A 4 4 0 0 1 70 48 L 70 316 A 4 4 0 0 1 66 316 Z" fill="#3498DB" />
 
   <!-- Embed Content -->
-  <text x="82" y="74" class="text-title">⚙️ PTT-DC-Bot 視覺化互動設定面板</text>
+  <text x="82" y="74" class="text-title">PTT-DC-Bot 視覺化互動設定面板</text>
   
   <text x="82" y="97" class="text-desc">
-    <tspan font-weight="600">歸屬範圍</tspan>：<tspan fill="#F2F3F5">🏠 伺服器共用追蹤</tspan>
+    <tspan font-weight="600">歸屬範圍</tspan>：<tspan fill="#F2F3F5">[伺服器追蹤]</tspan>
   </text>
   <text x="82" y="115" class="text-muted">歡迎使用 PTT 智慧追蹤機器人！透過本面板，您可以一鍵完成推播頻道綁定、</text>
   <text x="82" y="131" class="text-muted">勾選熱門二手交易看板、新增追蹤關鍵字，並發送測試推播驗證。</text>
 
   <!-- Field 1: 目前推播目標 -->
-  <text x="82" y="153" class="text-label">📍 目前推播目標</text>
-  <text x="82" y="170" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif" font-size="12" fill="#F1C40F">⚠️ 尚未綁定（請點擊下方按鈕設定）</text>
+  <text x="82" y="153" class="text-label">目前推播目標</text>
+  <text x="82" y="170" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif" font-size="12" fill="#F1C40F">[提示] 尚未綁定（請點擊下方按鈕設定）</text>
 
   <!-- Field 2: 系統監控看板 -->
-  <text x="82" y="192" class="text-label">📋 系統監控看板 (1/5)</text>
+  <text x="82" y="192" class="text-label">系統監控看板 (1/5)</text>
   <rect x="82" y="199" width="100" height="20" rx="3" fill="#1E1F22" />
   <text x="90" y="213" class="text-code">HardwareSale</text>
 
   <!-- Field 3: 已設定追蹤關鍵字 -->
-  <text x="260" y="192" class="text-label">🎯 已設定追蹤關鍵字 (0/10)</text>
+  <text x="260" y="192" class="text-label">已設定追蹤關鍵字 (0/10)</text>
   <text x="260" y="213" class="text-muted">尚未設定關鍵字（點擊下方按鈕新增）</text>
 
-  <!-- Field 4: 快速設定引導 -->
-  <text x="82" y="237" class="text-label">🚀 快速設定引導</text>
-  <text x="82" y="253" class="text-submuted">1️⃣ 點擊 「📌 綁定此頻道為推播頻道」 設定通知目標   2️⃣ 在下拉選單中快速勾選要監控的 熱門交易看板</text>
-  <text x="82" y="269" class="text-submuted">3️⃣ 點擊 「➕ 新增追蹤關鍵字」 填入商品與預算上限     4️⃣ 點擊 「🔔 測試推播通知」 確認通知卡片正常送達</text>
+  <!-- Field 4: 快速設定步驟 -->
+  <text x="82" y="237" class="text-label">快速設定步驟</text>
+  <text x="82" y="253" class="text-submuted">1. 點擊「綁定此頻道為推播頻道」設定通知目標  2. 在下拉選單中快速勾選熱門交易看板</text>
+  <text x="82" y="269" class="text-submuted">3. 點擊「新增追蹤關鍵字」填入商品與預算上限  4. 點擊「測試推播通知」確認通知卡片正常送達</text>
 
   <!-- Footer -->
-  <text x="82" y="297" class="text-submuted">PTT-DC-Bot /setup 互動設定面板 • 今天 23:20</text>
+  <text x="82" y="297" class="text-submuted">PTT-DC-Bot /setup 互動設定面板 • 語言: 繁體中文 (zh_TW)</text>
 
   <!-- Row 0: Dropdown Placeholder -->
   <rect x="66" y="326" width="584" height="38" rx="4" fill="#2B2D31" stroke="#3F4147" stroke-width="1" />
-  <text x="82" y="350" class="text-muted" font-size="13">📋 快速選擇監控看板（可多選）...</text>
+  <text x="82" y="350" class="text-muted" font-size="13">快速選擇監控看板（可多選）...</text>
   <text x="632" y="350" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="11" fill="#949BA4" text-anchor="end">▼</text>
 
   <!-- Row 1: Action Buttons -->
   <!-- Button 1: Bind Channel (Blurple #5865F2) -->
   <rect x="66" y="376" width="206" height="38" rx="4" fill="#5865F2" />
-  <text x="169" y="400" class="text-btn">📌 綁定此頻道為推播頻道</text>
+  <text x="169" y="400" class="text-btn">綁定此頻道為推播頻道</text>
 
   <!-- Button 2: Add Keyword (Green #248046) -->
   <rect x="282" y="376" width="168" height="38" rx="4" fill="#248046" />
-  <text x="366" y="400" class="text-btn">➕ 新增追蹤關鍵字</text>
+  <text x="366" y="400" class="text-btn">新增追蹤關鍵字</text>
 
   <!-- Button 3: Test Push (Grey #4E5058) -->
   <rect x="460" y="376" width="156" height="38" rx="4" fill="#4E5058" />
-  <text x="538" y="400" class="text-btn">🔔 測試推播通知</text>
+  <text x="538" y="400" class="text-btn">測試推播通知</text>
 </svg>

@@ -19,8 +19,8 @@
   <rect width="560" height="490" rx="8" class="modal-bg" />
 
   <!-- Header -->
-  <text x="28" y="38" class="text-title">➕ 新增追蹤關鍵字</text>
-  <text x="532" y="38" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16" fill="#949BA4" text-anchor="end" cursor="pointer">✕</text>
+  <text x="28" y="38" class="text-title">新增追蹤關鍵字</text>
+  <text x="532" y="38" font-family="-apple-system, BlinkMacSystemFont, sans-serif" font-size="16" fill="#949BA4" text-anchor="end" cursor="pointer">&#215;</text>
 
   <!-- Field 1: 追蹤關鍵字 (必填) [Active Focus] -->
   <text x="28" y="76" class="text-label">

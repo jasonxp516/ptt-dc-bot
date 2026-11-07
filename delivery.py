@@ -96,9 +96,9 @@ class DeliveryManager:
         sub_id = sub["id"]
         scope = sub.get("scope", "guild")
         scope_label = (
-            f"👤 個人追蹤 ({sub.get('display_name') or sub.get('discord_id')})"
+            f"[個人追蹤] {sub.get('display_name') or sub.get('discord_id')}"
             if scope == "user"
-            else f"🏠 伺服器追蹤 ({sub.get('display_name') or '共用'})"
+            else f"[伺服器追蹤] {sub.get('display_name') or '共用'}"
         )
 
         # Filter out 3-day duplicate reposts for this subscriber
@@ -173,9 +173,9 @@ class DeliveryManager:
                 art = it["article"]
                 det = it.get("detail") or {}
                 pr = det.get("extracted_price") or "見內文"
-                lines.append(f"**{idx}.** [{art['title'][:65]}]({art['url']}) — 💰 `{pr}`")
+                lines.append(f"**{idx}.** [{art['title'][:65]}]({art['url']}) — `{pr}`")
             ov_embed = discord.Embed(
-                title=f"📦 另外還有 {len(overflow_slice)} 篇同時命中的新文章",
+                title=f"同時命中的其他新文章 ({len(overflow_slice)} 篇)",
                 description="\n".join(lines),
                 color=discord.Color.gold(),
                 timestamp=datetime.now(),
@@ -203,7 +203,7 @@ class DeliveryManager:
         D1 Follow-up Sold Update:
         Periodically re-checks a couple of recently delivered articles (<18h old) using the rule engine
         (zero AI token cost). If an item is now marked sold/reserved on PTT, edits the original Discord message
-        with a strikethrough '🔴【已售出/已結案】' badge!
+        with a strikethrough '[已售出]' badge!
         """
         recent = self.storage.get_recent_unmarked_deliveries(max_age_hours=18, limit=max_checks * 2)
         if not recent:

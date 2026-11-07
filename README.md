@@ -58,7 +58,7 @@
 
 ### 方式一：一行指令自動安裝與引導（推薦）
 
-打開終端機（Terminal 或 PowerShell），貼上對應系統的一行指令即可自動完成「下載專案 ➜ 建立虛擬環境 ➜ 安裝相依套件 ➜ 啟動互動設定精靈 ➜ 產生邀請網址 ➜ 啟動服務」：
+打開終端機（Terminal 或 PowerShell），貼上對應系統的一行指令即可自動完成「下載專案 -> 建立虛擬環境 -> 安裝相依套件 -> 啟動互動設定精靈 -> 產生邀請網址 -> 啟動服務」：
 
 #### Linux / macOS
 ```bash
@@ -85,10 +85,12 @@ irm https://raw.githubusercontent.com/jasonxp516/ptt-dc-bot/main/install.ps1 | i
 1. 前往專案的 [GitHub Releases 發行頁面](https://github.com/jasonxp516/ptt-dc-bot/releases) 下載最新版本檔案：
    - **Windows**：下載 `ptt-dc-bot-<版本>-windows.zip`
    - **macOS**：下載 `ptt-dc-bot-<版本>-macos.tar.gz`
-2. 將壓縮檔解壓縮至任意目錄（例如桌面或個人資料夾）。
+   - **Linux**：下載 `ptt-dc-bot-<版本>-linux.tar.gz`（例如 `ptt-dc-bot-v1.0.0-beta.1-linux.tar.gz`）
+2. 將壓縮檔解壓縮至任意目錄（例如桌面或個人資料夾，Linux 可使用 `tar -xzf ptt-dc-bot-*-linux.tar.gz` 解壓縮）。
 3. 執行啟動器：
    - **Windows**：滑鼠雙擊 **`start_windows.bat`**
    - **macOS**：滑鼠雙擊 **`start_mac.command`**
+   - **Linux**：終端機進入解壓縮目錄執行 **`./install.sh`** 進行初始化設定（或執行 `./start_bg.sh` 常駐啟動 / `python3 bot.py` 前台執行）
 4. 首次執行時會自動初始化環境並彈出設定精靈，依指示貼上金鑰後即自動連線啟動。
 
 *守護機制*：
@@ -194,7 +196,7 @@ docker compose down
   - `Embed Links`（嵌入連結，卡片排版必備）
   - `Read Message History`（讀取歷史訊息）
 
-> **⚠️ 重要提醒**：請務必至 [Discord 開發者後台](https://discord.com/developers/applications) -> 你的 Bot -> **Bot** 分頁 -> **Privileged Gateway Intents**，將 **Message Content Intent** 開啟並儲存。若未開啟此選項，機器人將無法讀取訊息內容與私訊對話。
+> **[重要提醒]**：請務必至 [Discord 開發者後台](https://discord.com/developers/applications) -> 你的 Bot -> **Bot** 分頁 -> **Privileged Gateway Intents**，將 **Message Content Intent** 開啟並儲存。若未開啟此選項，機器人將無法讀取訊息內容與私訊對話。
 
 ---
 
@@ -222,10 +224,10 @@ docker compose down
 
 面板四大操作步驟：
 
-1. **第一步：點擊「📌 綁定此頻道為推播頻道」按鈕**  
+1. **第一步：點擊「綁定此頻道為推播頻道」按鈕**  
    - 一鍵將目前所在的文字頻道設為推播目標。
    - 若在與機器人的私訊（DM）視窗點擊，則會直接設定為個人專屬私訊推播。
-2. **第二步：在「📋 快速選擇監控看板」下拉選單勾選看板**  
+2. **第二步：在「快速選擇監控看板」下拉選單勾選看板**  
    - 下拉選單已預載社群最熱門的二手交易看板：
      - `HardwareSale`：電蝦二手（桌機零組件、顯示卡、周邊設備）
      - `MacShop`：蘋果二手（MacBook、iPhone、iPad、原廠配件）
@@ -238,7 +240,7 @@ docker compose down
   <img src="assets/dropdown_boards_select.svg" alt="快速選擇監控看板下拉選單" width="680"/>
 </p>
 
-3. **第三步：點擊「➕ 新增追蹤關鍵字」按鈕（彈出 Modal 表單）**  
+3. **第三步：點擊「新增追蹤關鍵字」按鈕（彈出 Modal 表單）**  
    - 點擊後彈出表單視窗，填寫以下欄位：
      - **追蹤關鍵字（必填）**：支援多詞空格（AND 邏輯，如 `3060Ti 台北`）與減號排除（如 `3060 -筆電 -礦`）。
      - **目標看板（選填）**：預設為 `HardwareSale`，可自行指定其他看板。
@@ -249,7 +251,7 @@ docker compose down
   <img src="assets/keyword_modal_form.svg" alt="新增追蹤關鍵字彈出表單" width="560"/>
 </p>
 
-4. **第四步：點擊「🔔 測試推播通知」按鈕**  
+4. **第四步：點擊「測試推播通知」按鈕**  
    - 機器人會立即向已綁定的推播目標發送一張格式完整的測試通知 Embed 卡片。
    - 藉此確認 Bot 是否具備該頻道的發言權限，以及卡片排版是否正常送達。
 
@@ -293,7 +295,7 @@ PTT-DC-Bot 同時支援**「個人私訊 (DM)」**與**「伺服器公用頻道�
 以下整理完整指令清單、背景守護服務設定、環境變數與內部架構細節：
 
 <details>
-<summary><b>1. 完整 24 組 Slash 指令手冊</b></summary>
+<summary><b>1. 完整 25 組 Slash 指令手冊</b></summary>
 <br>
 
 #### 視覺化設定與 AI 搜尋
@@ -327,7 +329,8 @@ PTT-DC-Bot 同時支援**「個人私訊 (DM)」**與**「伺服器公用頻道�
 | 指令 | 參數 | 說明 |
 | :--- | :--- | :--- |
 | `/channel_set` | `channel`, `scope` | 設定推播通知的目標頻道（私訊中執行則設為私訊通知） |
-| `/pause` / `/resume` | `scope` | 暫停或恢復推播通知（保留既有規則設定） |
+| `/pause` | `scope` | 暫停接收推播通知（保留既有規則設定） |
+| `/resume` | `scope` | 恢復接收推播通知 |
 | `/me` | 無 | 查看個人目前的追蹤規則、私訊連線狀態與今日剩餘配額 |
 | `/forget_me` | 無 | 徹底刪除個人在資料庫中的所有規則、推播紀錄與對話記憶 |
 | `/status` | `scope` | 檢視系統運行狀態、Groq 佇列負載與爬蟲狀態 |
@@ -407,7 +410,7 @@ bash restart_bg.sh
 
 ```text
 ptt-dc-bot/
-├── bot.py                  # Discord Client 主程式、/setup 視覺化面板與 24 組指令
+├── bot.py                  # Discord Client 主程式、/setup 視覺化面板與 25 組指令
 ├── setup_wizard.py         # 零依賴互動式 CLI 設定精靈（標準庫實作，Token 驗證與邀請連結計算）
 ├── install.sh              # Linux / macOS 一鍵安裝與設定腳本
 ├── install.ps1             # Windows PowerShell 一鍵安裝腳本

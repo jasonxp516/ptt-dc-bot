@@ -12,7 +12,6 @@ class ArticleLinkView(discord.ui.View):
                 label=f"前往 PTT {board} 查看原文",
                 url=url,
                 style=discord.ButtonStyle.link,
-                emoji="🔗",
             )
         )
 
@@ -38,7 +37,7 @@ class PaginatedEmbedView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.owner_id is not None and interaction.user.id != self.owner_id:
             await interaction.response.send_message(
-                "ℹ️ 這張分頁卡片是由其他成員發起的查詢，請自行輸入 `/scan_unsold` 查看您的專屬結果！",
+                "[提示] 這張分頁卡片是由其他成員發起的查詢，請自行輸入 `/scan_unsold` 查看您的專屬結果。",
                 ephemeral=True,
             )
             return False
@@ -49,7 +48,7 @@ class PaginatedEmbedView(discord.ui.View):
         self.next_btn.disabled = self.current_idx >= len(self.pages) - 1
         self.page_indicator.label = f"{self.current_idx + 1} / {len(self.pages)}"
 
-    @discord.ui.button(label="⬅️ 上一頁", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="上一頁", style=discord.ButtonStyle.secondary)
     async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_idx > 0:
             self.current_idx -= 1
@@ -60,7 +59,7 @@ class PaginatedEmbedView(discord.ui.View):
     async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
         pass
 
-    @discord.ui.button(label="下一頁 ➡️", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="下一頁", style=discord.ButtonStyle.secondary)
     async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_idx < len(self.pages) - 1:
             self.current_idx += 1
@@ -119,7 +118,7 @@ def build_article_embed(
 
     if is_sold_update:
         color = discord.Color.from_rgb(127, 140, 141)
-        display_title = f"🔴【已售出/已結案】~~{title[:210]}~~"
+        display_title = f"[已售出] ~~{title[:210]}~~"
         author_header = f"PTT 【{article['board']}】商品狀態更新（已售出或停止收信）"
     else:
         display_title = title[:250]
@@ -148,23 +147,23 @@ def build_article_embed(
 
     if matched_keywords:
         kw_str = " 、 ".join(f"`{k}`" for k in matched_keywords)
-        embed.add_field(name="🎯 命中精確關鍵字", value=kw_str[:1000], inline=False)
+        embed.add_field(name="命中關鍵字", value=kw_str[:1000], inline=False)
 
     if fuzzy_matches:
         f_lines = [
-            f"• **{m['rule_id']}** `{m['description']}`\n  👉 *{m['reason']}*"
+            f"• **{m['rule_id']}** `{m['description']}`\n    *{m['reason']}*"
             for m in fuzzy_matches
         ]
         embed.add_field(
-            name="🧠 AI 模糊追蹤命中",
+            name="AI 語意追蹤命中",
             value="\n".join(f_lines)[:1000],
             inline=False,
         )
 
-    embed.add_field(name="👤 作者", value=f"`{article.get('author', '未知')}`", inline=True)
-    embed.add_field(name="🏷️ 分類", value=f"`{cat or '一般'}`", inline=True)
+    embed.add_field(name="作者", value=f"`{article.get('author', '未知')}`", inline=True)
+    embed.add_field(name="分類", value=f"`{cat or '一般'}`", inline=True)
     embed.add_field(
-        name="📅 日期 / 推文",
+        name="日期 / 推文",
         value=f"`{article.get('date', '-')}` (推: `{article.get('nrec', '0')}`)",
         inline=True,
     )
@@ -172,30 +171,30 @@ def build_article_embed(
     if detail:
         if detail.get("extracted_price"):
             embed.add_field(
-                name="💰 欲售價格",
+                name="欲售價格",
                 value=f"**`{detail['extracted_price'][:80]}`**",
                 inline=True,
             )
         if detail.get("extracted_location"):
             embed.add_field(
-                name="📍 交易方式/地區",
+                name="交易方式 / 地區",
                 value=f"`{detail['extracted_location'][:80]}`",
                 inline=True,
             )
         q_cnt = detail.get("buyer_queue_count", 0)
-        q_str = f"🔥 已有 `{q_cnt}` 人留言排/私訊" if q_cnt > 0 else "✨ 尚無人留言排隊"
-        embed.add_field(name="👥 買家熱度", value=q_str, inline=True)
+        q_str = f"已有 `{q_cnt}` 位買家留言 / 排隊" if q_cnt > 0 else "尚無買家排隊"
+        embed.add_field(name="買方排隊狀況", value=q_str, inline=True)
 
         if not is_sold_update and detail.get("ai_summary_note"):
             embed.add_field(
-                name="🤖 AI 品況/語意摘要",
+                name="AI 摘要評估",
                 value=f"`{detail['ai_summary_note'][:180]}`",
                 inline=False,
             )
 
         if is_sold_update and detail.get("sold_reason"):
             embed.add_field(
-                name="🔴 結案原因",
+                name="結案原因",
                 value=f"`{detail['sold_reason'][:200]}`",
                 inline=False,
             )
@@ -203,7 +202,7 @@ def build_article_embed(
         snippet = detail.get("snippet")
         if snippet:
             embed.add_field(
-                name="📄 內文重點預覽",
+                name="內文重點預覽",
                 value=f"```text\n{snippet[:850]}\n```",
                 inline=False,
             )

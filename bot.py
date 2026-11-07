@@ -98,9 +98,9 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
 SCOPE_CHOICES = [
-    app_commands.Choice(name="🔄 自動判斷 (私訊=個人 / 頻道=伺服器)", value="auto"),
-    app_commands.Choice(name="👤 個人專屬追蹤 (推播至我的 Discord 私訊)", value="user"),
-    app_commands.Choice(name="🏠 伺服器共用追蹤 (推播至伺服器通知頻道)", value="guild"),
+    app_commands.Choice(name="自動判斷 (私訊=個人 / 頻道=伺服器)", value="auto"),
+    app_commands.Choice(name="個人專屬追蹤 (推播至我的 Discord 私訊)", value="user"),
+    app_commands.Choice(name="伺服器共用追蹤 (推播至伺服器通知頻道)", value="guild"),
 ]
 
 
@@ -145,16 +145,16 @@ def build_welcome_dm_embed(display_name: str) -> discord.Embed:
     Fix P3-3: Static zero-token welcome card sent the first time a friend DMs the bot.
     """
     embed = discord.Embed(
-        title=f"👋 歡迎使用 PTT 智慧追蹤機器人，{display_name}！",
+        title=f"歡迎使用 PTT 智慧追蹤機器人，{display_name}",
         description=(
-            "這裡是您的 **👤 個人專屬追蹤空間**。您在私訊中設定的所有關鍵字與 AI 模糊規則皆完全獨立，"
+            "這裡是您的 **[個人專屬追蹤空間]**。您在私訊中設定的所有關鍵字與 AI 模糊規則皆完全獨立，"
             "一旦 PTT 有符合條件且**尚未售出**的新文章上架，機器人會直接傳送私訊通知您！"
         ),
         color=discord.Color.from_rgb(46, 204, 113),
         timestamp=datetime.now(),
     )
     embed.add_field(
-        name="💬 您可以直接用自然語言對我說：",
+        name="您可以直接以自然語言對話：",
         value=(
             "• `幫我追蹤 HardwareSale 板販售的 3060TI 跟 6700XT`\n"
             "• `幫我設定模糊追蹤：預算 6500 元以下、有保固的 RTX 3060Ti`\n"
@@ -164,16 +164,16 @@ def build_welcome_dm_embed(display_name: str) -> discord.Embed:
         inline=False,
     )
     embed.add_field(
-        name="🛠️ 常用快捷指令",
+        name="常用快捷指令",
         value=(
-            "• `/me`：查看個人規則清單与今日剩餘配額\n"
+            "• `/me`：查看個人規則清單與今日剩餘配額\n"
             "• `/keyword_add` / `/fuzzy_add`：不消耗 AI 對話額度快速新增規則\n"
             "• `/pause` / `/resume`：暫停或恢復私訊推播通知\n"
             "• `/forget_me`：一鍵清除您的所有個人資料與記憶"
         ),
         inline=False,
     )
-    embed.set_footer(text="👤 個人專屬追蹤 | 雙層規則引擎 + Groq 多模型語意過濾")
+    embed.set_footer(text="[個人專屬追蹤] 雙層規則引擎 + Groq 多模型語意過濾")
     return embed
 
 
@@ -259,23 +259,23 @@ class PTTDiscordBot(discord.Client):
                         self.detected_owner_id = str(owner.id)
 
                     welcome_embed = discord.Embed(
-                        title="👋 歡迎使用 PTT-DC-Bot 智慧追蹤機器人！",
+                        title="歡迎使用 PTT-DC-Bot 智慧追蹤機器人",
                         description=(
                             "感謝安裝 PTT-DC-Bot！這是您的首次啟動引導。\n\n"
-                            "💡 **快速設定 4 步驟**：\n"
+                            "**快速設定 4 步驟**：\n"
                             "1. 在您要接收推播的伺服器頻道輸入 `/setup`\n"
-                            "2. 點擊 **「📌 綁定此頻道為推播頻道」**\n"
-                            "3. 點選 **「📋 快速選擇監控看板」** 下拉選單勾選想追蹤的看板\n"
-                            "4. 點擊 **「➕ 新增追蹤關鍵字」** 填入想追蹤的商品型號與預算上限！\n\n"
-                            "✨ 您也可以直接在此私訊輸入 `/setup` 開啟**個人專屬私訊推播**！"
+                            "2. 點擊 **「綁定此頻道為推播頻道」**\n"
+                            "3. 點選 **「快速選擇監控看板」** 下拉選單勾選想追蹤的看板\n"
+                            "4. 點擊 **「新增追蹤關鍵字」** 填入想追蹤的商品型號與預算上限！\n\n"
+                            "您也可以直接在此私訊輸入 `/setup` 開啟**個人專屬私訊推播**！"
                         ),
                         color=discord.Color.from_rgb(46, 204, 113),
                         timestamp=datetime.now(),
                     )
                     welcome_embed.add_field(
-                        name="🛠️ 常用指令",
+                        name="常用指令",
                         value=(
-                            "• `/setup`：視覺化設定面板（推薦新手使用）\n"
+                            "• `/setup`：視覺化設定面板（推薦使用）\n"
                             "• `/ai`：自然語言 AI 助手（設定條件、查看板）\n"
                             "• `/scan_unsold`：掃描目前版上尚未售出的商品\n"
                             "• `/status`：查看機器人巡檢狀態"
@@ -391,7 +391,7 @@ class PTTDiscordBot(discord.Client):
         self._last_board_alert_ts[board_name] = now
 
         alert_text = (
-            f"⚠️ **PTT 看板巡檢異常警報**\n"
+            f"[警告] **PTT 看板巡檢異常警報**\n"
             f"看板 `{board_name}` 已連續 `{failures}` 次抓取失敗（最新狀態：`{status_msg}`）。\n"
             f"系統已自動保留 `seen_articles` 基準（不會重置或吞沒文章），將於下一輪繼續重試。"
         )
@@ -439,7 +439,7 @@ class PTTDiscordBot(discord.Client):
                 sub["tier"] = "owner"
             if sub.get("dm_failed"):
                 self.storage.mark_subscriber_dm_failed(sub["id"], False)
-            scope_label = f"👤 個人專屬追蹤 ({message.author.display_name})"
+            scope_label = f"[個人追蹤] {message.author.display_name}"
             can_write = True
 
             # Fix P3-3: Send static welcome guide on first DM
@@ -461,7 +461,7 @@ class PTTDiscordBot(discord.Client):
                 sub = self.storage.get_or_create_subscriber(
                     "user", user_id_str, display_name=message.author.display_name
                 )
-                scope_label = f"👤 個人專屬追蹤 ({message.author.display_name})"
+                scope_label = f"[個人追蹤] {message.author.display_name}"
                 can_write = True
             else:
                 sub = self.storage.get_or_create_subscriber(
@@ -469,7 +469,7 @@ class PTTDiscordBot(discord.Client):
                     str(message.guild.id),
                     display_name=message.guild.name,
                 )
-                scope_label = f"🏠 伺服器追蹤 ({message.guild.name})"
+                scope_label = f"[伺服器追蹤] {message.guild.name}"
                 # Fix P0-2: Enforce guild write permission for @mention in guild channels!
                 can_write = has_guild_write_permission(message.author, message.guild)
 
@@ -481,7 +481,7 @@ class PTTDiscordBot(discord.Client):
 
         if not self.scheduler.acquire_user_slot(user_id_str, "ai"):
             await message.reply(
-                "⏳ 您目前已有一個 AI 任務正在處理中，請稍候幾秒待上一則回覆完成！",
+                "[處理中] 目前已有其他 AI 任務正在處理中，請稍候片刻待回覆完成。",
                 mention_author=False,
             )
             return
@@ -492,8 +492,8 @@ class PTTDiscordBot(discord.Client):
             )
             if not allowed:
                 await message.reply(
-                    f"⚠️ 已達今日 AI 對話次數上限（`{used_cnt}/{limit_cnt}` 次）。\n"
-                    f"💡 您仍可隨時使用不消耗 AI 對話額度的 Slash 指令（如 `/keyword_add`、`/keyword_list`、`/search`）！",
+                    f"[提示] 已達今日 AI 對話次數上限（`{used_cnt}/{limit_cnt}` 次）。\n"
+                    f"您仍可隨時使用不消耗 AI 對話額度的 Slash 指令（如 `/keyword_add`、`/keyword_list`、`/search`）。",
                     mention_author=False,
                 )
                 return
@@ -502,7 +502,7 @@ class PTTDiscordBot(discord.Client):
             wait_msg: Optional[discord.Message] = None
             if q_status["queue_size"] > 0:
                 wait_msg = await message.reply(
-                    f"⏳ AI 智慧助手排隊處理中（目前佇列 `{q_status['queue_size']}` 筆，預計等待約 `{q_status['estimated_wait_sec']}s`）...",
+                    f"[佇列中] AI 助手排隊處理中（目前佇列 `{q_status['queue_size']}` 筆，預計等待約 `{q_status['estimated_wait_sec']}s`）...",
                     mention_author=False,
                 )
 
@@ -515,14 +515,14 @@ class PTTDiscordBot(discord.Client):
                     can_write=can_write,
                 )
                 embed = discord.Embed(
-                    title="🤖 PTT AI 智慧助手回覆",
+                    title="PTT AI 助手回覆",
                     description=answer[:3900],
                     color=discord.Color.from_rgb(155, 89, 182),
                     timestamp=datetime.now(),
                 )
                 if steps:
                     embed.add_field(
-                        name=f"🛠️ AI 自動執行的工具步驟 ({len(steps)})",
+                        name=f"工具執行步驟 ({len(steps)})",
                         value="\n".join(steps)[:1000],
                         inline=False,
                     )
@@ -541,7 +541,7 @@ class PTTDiscordBot(discord.Client):
         except Exception as e:
             logger.error(f"處理 AI 對話失敗: {e}", exc_info=True)
             await message.reply(
-                "❌ 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
+                "[錯誤] 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
                 mention_author=False,
             )
         finally:
@@ -877,7 +877,7 @@ async def on_tree_error(
     interaction: discord.Interaction, error: app_commands.AppCommandError
 ) -> None:
     logger.error(f"Slash 指令執行錯誤 ({interaction.command}): {error}", exc_info=True)
-    msg = "❌ 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。"
+    msg = "[錯誤] 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。"
     try:
         if interaction.response.is_done():
             await interaction.followup.send(msg, ephemeral=True)
@@ -900,7 +900,7 @@ def resolve_interaction_subscriber(
     uid_str = str(user.id)
 
     if bot.storage.is_blacklisted(uid_str):
-        return None, "", "🚫 您的帳號目前已被限制使用本機器人。"
+        return None, "", "[存取受限] 您的帳號目前已被限制使用本機器人。"
 
     is_dm = interaction.guild is None
     if is_dm or scope_choice == "user":
@@ -912,7 +912,7 @@ def resolve_interaction_subscriber(
             sub["tier"] = "owner"
         if sub.get("dm_failed"):
             bot.storage.mark_subscriber_dm_failed(sub["id"], False)
-        return sub, f"👤 個人專屬追蹤 ({user.display_name})", None
+        return sub, f"[個人追蹤] {user.display_name}", None
 
     # Otherwise scope is 'guild'
     guild = interaction.guild
@@ -923,8 +923,8 @@ def resolve_interaction_subscriber(
             return (
                 None,
                 "",
-                "🔒 修改「伺服器共用追蹤」需要伺服器的 `管理伺服器 (Manage Server)` 或 `管理頻道 (Manage Channels)` 權限！\n"
-                "💡 **想要建立您個人的專屬通知嗎？** 請在指令的 `scope` 選擇 **「👤 個人專屬追蹤」**，或直接**私訊 (DM)** 本機器人即可免費使用！",
+                "[權限不足] 修改「伺服器共用追蹤」需要伺服器的 `管理伺服器 (Manage Server)` 或 `管理頻道 (Manage Channels)` 權限。\n"
+                "[提示] 想要建立個人的專屬通知，請在指令的 `scope` 選擇「個人專屬追蹤」，或直接私訊 (DM) 本機器人即可免費使用。",
             )
 
     default_ch = str(DEFAULT_CHANNEL_ID) if gid_str == str(DEFAULT_GUILD_ID) else None
@@ -937,7 +937,7 @@ def resolve_interaction_subscriber(
         display_name=guild.name,
         default_push_channel_id=default_ch,
     )
-    return sub, f"🏠 伺服器共用追蹤 ({guild.name})", None
+    return sub, f"[伺服器追蹤] {guild.name}", None
 
 
 # =====================================================================
@@ -978,7 +978,7 @@ async def keyword_autocomplete(
         if kw["id"] in seen_ids:
             continue
         seen_ids.add(kw["id"])
-        tag = "👤個人" if kw["subscriber_id"] == user_sub_id else "🏠伺服器"
+        tag = "個人" if kw["subscriber_id"] == user_sub_id else "伺服器"
         display = f"#{kw['id']} [{tag}] {kw['keyword']} ({kw['board']}/{kw['category']})"
         if current.lower() in display.lower():
             choices.append(app_commands.Choice(name=display[:100], value=str(kw["id"])))
@@ -1009,7 +1009,7 @@ async def fuzzy_autocomplete(
         if r["id"] in seen_ids:
             continue
         seen_ids.add(r["id"])
-        tag = "👤個人" if r["subscriber_id"] == user_sub_id else "🏠伺服器"
+        tag = "個人" if r["subscriber_id"] == user_sub_id else "伺服器"
         display = f"#{r['id']} [{tag}] {r['description'][:55]} ({r['board']})"
         if current.lower() in display.lower():
             choices.append(app_commands.Choice(name=display[:100], value=str(r["id"])))
@@ -1021,11 +1021,11 @@ async def fuzzy_autocomplete(
 # =====================================================================
 
 POPULAR_BOARDS = [
-    ("HardwareSale", "電蝦二手 (電腦零件/周邊)", "🖥️"),
-    ("MacShop", "蘋果二手 (Apple 裝置/配件)", "🍎"),
-    ("nb-shopping", "筆電交易 (筆記型電腦/二手筆電)", "💻"),
-    ("Gamesale", "遊戲交易 (遊戲片/主機周邊)", "🎮"),
-    ("MobileComm", "手機通訊 (智慧手機/通訊設備)", "📱"),
+    ("HardwareSale", "電蝦二手 (電腦零件/周邊)", None),
+    ("MacShop", "蘋果二手 (Apple 裝置/配件)", None),
+    ("nb-shopping", "筆電交易 (筆記型電腦/二手筆電)", None),
+    ("Gamesale", "遊戲交易 (遊戲片/主機周邊)", None),
+    ("MobileComm", "手機通訊 (智慧手機/通訊設備)", None),
 ]
 
 
@@ -1052,9 +1052,9 @@ class PopularBoardsSelect(discord.ui.Select):
         ]
         lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
         placeholder = (
-            "📋 Select boards to monitor (multi-select)..."
+            "Select boards to monitor (multi-select)..."
             if lang == "en"
-            else "📋 快速選擇監控看板（可多選）..."
+            else "快速選擇監控看板（可多選）..."
         )
         super().__init__(
             placeholder=placeholder,
@@ -1073,12 +1073,12 @@ class PopularBoardsSelect(discord.ui.Select):
                 interaction, scope_choice="auto", require_write_perm=True
             )
             if err or not sub:
-                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
                 return
 
         selected = getattr(self, "values", []) or getattr(interaction, "data", {}).get("values", [])
         if not selected:
-            await interaction.response.send_message("⚠️ 請選擇至少一個看板！", ephemeral=True)
+            await interaction.response.send_message("[提示] 請選擇至少一個看板。", ephemeral=True)
             return
 
         added_boards = []
@@ -1095,15 +1095,15 @@ class PopularBoardsSelect(discord.ui.Select):
 
         msg_parts = []
         if added_boards:
-            msg_parts.append(f"✅ 成功將看板加入監控：{', '.join(f'`{b}`' for b in added_boards)}")
+            msg_parts.append(f"[成功] 已將看板加入監控名單：{', '.join(f'`{b}`' for b in added_boards)}")
         if already_tracked:
-            msg_parts.append(f"ℹ️ 看板已在監控名單中：{', '.join(f'`{b}`' for b in already_tracked)}")
-        msg_parts.append("💡 提示：可點擊下方 **「➕ 新增追蹤關鍵字」** 設定要追蹤的商品！")
+            msg_parts.append(f"[資訊] 看板已在監控名單中：{', '.join(f'`{b}`' for b in already_tracked)}")
+        msg_parts.append("[提示] 可點擊下方「新增追蹤關鍵字」設定要追蹤的商品。")
 
         await interaction.response.send_message("\n".join(msg_parts), ephemeral=True)
 
 
-class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
+class KeywordAddModal(discord.ui.Modal, title="新增追蹤關鍵字"):
     """F16: Modal form for adding exact monitoring keywords with price caps."""
 
     keyword = discord.ui.TextInput(
@@ -1160,7 +1160,7 @@ class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
         price_raw = str(getattr(self.max_price, "value", "") or "").strip()
 
         if not kw_val:
-            await interaction.response.send_message("❌ 關鍵字不可為空！", ephemeral=True)
+            await interaction.response.send_message("[錯誤] 關鍵字不可為空。", ephemeral=True)
             return
 
         # Canonicalize board name
@@ -1188,15 +1188,15 @@ class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
                     price_val = extracted
                 else:
                     await interaction.response.send_message(
-                        f"❌ 預算上限格式錯誤：`{price_raw}` 無法識別為有效金額。\n"
-                        "請輸入純整數金額（例如：`6500`）或留空！",
+                        f"[錯誤] 預算上限格式錯誤：`{price_raw}` 無法識別為有效金額。\n"
+                        "請輸入純整數金額（例如：`6500`）或留空。",
                         ephemeral=True,
                     )
                     return
 
             if price_val < 100 or price_val > 500000:
                 await interaction.response.send_message(
-                    f"❌ 預算上限金額需介於 100 ~ 500,000 元之間（您輸入的是：`{price_val}` 元）！",
+                    f"[錯誤] 預算上限金額需介於 100 ~ 500,000 元之間（輸入值為 `{price_val}` 元）。",
                     ephemeral=True,
                 )
                 return
@@ -1208,7 +1208,7 @@ class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
                 interaction, scope_choice="auto", require_write_perm=True
             )
             if err or not sub:
-                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
                 return
 
         ok, msg = bot_inst.storage.add_keyword(
@@ -1221,11 +1221,11 @@ class KeywordAddModal(discord.ui.Modal, title="➕ 新增追蹤關鍵字"):
         if ok:
             price_note = f", 預算上限: `{price_val:,}元`" if price_val else ""
             await interaction.response.send_message(
-                f"✅ {msg}\n• 關鍵字：`{kw_val}`\n• 看板：`{board_val}` | 分類：`{cat_val}`{price_note}",
+                f"[成功] {msg}\n• 關鍵字：`{kw_val}`\n• 看板：`{board_val}` | 分類：`{cat_val}`{price_note}",
                 ephemeral=True,
             )
         else:
-            await interaction.response.send_message(f"⚠️ {msg}", ephemeral=True)
+            await interaction.response.send_message(f"[提示] {msg}", ephemeral=True)
 
 
 class SetupPanelView(discord.ui.View):
@@ -1257,31 +1257,30 @@ class SetupPanelView(discord.ui.View):
 
         lang = getattr(config, "BOT_LANGUAGE", "zh_TW")
         if lang == "en":
-            self.bind_channel_button.label = "📌 Bind Channel"
-            self.add_keyword_button.label = "➕ Add Keyword"
-            self.test_push_button.label = "🔔 Test Alert"
+            self.bind_channel_button.label = "Bind Channel"
+            self.add_keyword_button.label = "Add Keyword"
+            self.test_push_button.label = "Test Alert"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.subscriber and self.subscriber.get("scope") == "user":
             if str(interaction.user.id) != str(self.subscriber.get("discord_id")):
                 await interaction.response.send_message(
-                    "❌ 這是其他使用者的設定面板，您無法進行操作。", ephemeral=True
+                    "[錯誤] 這是其他使用者的設定面板，您無法進行操作。", ephemeral=True
                 )
                 return False
         elif interaction.guild:
             if not has_guild_write_permission(interaction.user, interaction.guild):
                 await interaction.response.send_message(
-                    "🔒 修改「伺服器共用追蹤」需要伺服器的 `管理伺服器 (Manage Server)` 或 `管理頻道 (Manage Channels)` 權限！",
+                    "[權限不足] 修改「伺服器共用追蹤」需要伺服器的 `管理伺服器 (Manage Server)` 或 `管理頻道 (Manage Channels)` 權限。",
                     ephemeral=True,
                 )
                 return False
         return True
 
     @discord.ui.button(
-        label="📌 綁定此頻道為推播頻道",
+        label="綁定此頻道為推播頻道",
         style=discord.ButtonStyle.primary,
         custom_id="ptt:setup:bind_channel",
-        emoji="📌",
         row=1,
     )
     async def bind_channel_button(
@@ -1294,28 +1293,27 @@ class SetupPanelView(discord.ui.View):
                 interaction, scope_choice="auto", require_write_perm=True
             )
             if err or not sub:
-                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
                 return
         else:
-            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+            scope_label = self.scope_label or ("[個人追蹤]" if sub.get("scope") == "user" else "[伺服器追蹤]")
 
         if interaction.guild is None or sub.get("scope") == "user":
             bot_inst.storage.update_subscriber_channel(sub["id"], None)
             await interaction.response.send_message(
-                "✅ 已成功將推播目標設定為 **Discord 私訊 (DM 直接通知)**！", ephemeral=True
+                "[成功] 已成功將推播目標設定為 **Discord 私訊 (DM 直接通知)**！", ephemeral=True
             )
         else:
             ch_id = str(interaction.channel_id)
             bot_inst.storage.update_subscriber_channel(sub["id"], ch_id)
             await interaction.response.send_message(
-                f"✅ 已成功將 <#{ch_id}> 綁定為 **{scope_label}** 的推播通知頻道！", ephemeral=True
+                f"[成功] 已成功將 <#{ch_id}> 綁定為 **{scope_label}** 的推播通知頻道！", ephemeral=True
             )
 
     @discord.ui.button(
-        label="➕ 新增追蹤關鍵字",
+        label="新增追蹤關鍵字",
         style=discord.ButtonStyle.success,
         custom_id="ptt:setup:add_keyword",
-        emoji="➕",
         row=1,
     )
     async def add_keyword_button(
@@ -1328,10 +1326,10 @@ class SetupPanelView(discord.ui.View):
                 interaction, scope_choice="auto", require_write_perm=True
             )
             if err or not sub:
-                await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+                await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
                 return
         else:
-            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+            scope_label = self.scope_label or ("[個人追蹤]" if sub.get("scope") == "user" else "[伺服器追蹤]")
 
         modal = KeywordAddModal(
             bot_instance=bot_inst,
@@ -1341,10 +1339,9 @@ class SetupPanelView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(
-        label="🔔 測試推播通知",
+        label="測試推播通知",
         style=discord.ButtonStyle.secondary,
         custom_id="ptt:setup:test_push",
-        emoji="🔔",
         row=1,
     )
     async def test_push_button(
@@ -1357,16 +1354,16 @@ class SetupPanelView(discord.ui.View):
                 interaction, scope_choice="auto", require_write_perm=False
             )
             if err or not sub:
-                await interaction.response.send_message(err or "❌ 查無設定", ephemeral=True)
+                await interaction.response.send_message(err or "[錯誤] 查無設定", ephemeral=True)
                 return
         else:
-            scope_label = self.scope_label or ("👤 個人專屬追蹤" if sub.get("scope") == "user" else "🏠 伺服器共用追蹤")
+            scope_label = self.scope_label or ("[個人追蹤]" if sub.get("scope") == "user" else "[伺服器追蹤]")
 
         fresh_sub = bot_inst.storage.get_subscriber_by_id(sub["id"]) or sub
         target = await bot_inst.delivery.resolve_subscriber_target(fresh_sub)
         if target is None:
             await interaction.response.send_message(
-                "⚠️ 尚未綁定推播目標！請先點擊「📌 綁定此頻道為推播頻道」完成綁定，或使用 `/channel_set` 設定推播目標！",
+                "[提示] 尚未綁定推播目標！請先點擊「綁定此頻道為推播頻道」完成綁定，或使用 `/channel_set` 設定推播目標！",
                 ephemeral=True,
             )
             return
@@ -1395,24 +1392,24 @@ class SetupPanelView(discord.ui.View):
         view = ArticleLinkView(sample_article["url"], sample_article["board"])
         try:
             await target.send(
-                content="🔔 **【PTT-DC-Bot 測試推播】** 恭喜！推播頻道通知與卡片格式皆正常運作！",
+                content="[測試推播] PTT-DC-Bot 通知測試：推播頻道與卡片格式正常運作。",
                 embed=embed,
                 view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             target_name = getattr(target, "mention", "您的私訊 (DM)")
             await interaction.response.send_message(
-                f"✅ 測試推播卡片已成功發送至 {target_name}！請確認是否有正常收到訊息。",
+                f"[成功] 測試推播卡片已成功發送至 {target_name}！請確認是否有正常收到訊息。",
                 ephemeral=True,
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "❌ 推播發送失敗：機器人缺乏在目標頻道傳送訊息或 Embed 之權限 (discord.Forbidden)！",
+                "[錯誤] 推播發送失敗：機器人缺乏在目標頻道傳送訊息或 Embed 之權限 (discord.Forbidden)！",
                 ephemeral=True,
             )
         except Exception as e:
             await interaction.response.send_message(
-                f"❌ 發送失敗：{e}", ephemeral=True
+                f"[錯誤] 發送失敗：{e}", ephemeral=True
             )
 
 
@@ -1428,21 +1425,21 @@ def build_setup_panel_embed(
     if not scope_label:
         if lang == "en":
             scope_label = (
-                "👤 Personal Tracking (DM)"
+                "[Personal Tracking] (DM)"
                 if (is_dm or sub.get("scope") == "user")
-                else "🏠 Server-wide Tracking"
+                else "[Server-wide Tracking]"
             )
         else:
             scope_label = (
-                "👤 個人專屬追蹤"
+                "[個人追蹤]"
                 if (is_dm or sub.get("scope") == "user")
-                else "🏠 伺服器共用追蹤"
+                else "[伺服器追蹤]"
             )
     elif lang == "en":
         if "個人" in scope_label:
-            scope_label = "👤 Personal Tracking (DM)"
+            scope_label = "[Personal Tracking] (DM)"
         elif "伺服器" in scope_label:
-            scope_label = "🏠 Server-wide Tracking"
+            scope_label = "[Server-wide Tracking]"
 
     push_ch = sub.get("push_channel_id")
     if push_ch:
@@ -1450,15 +1447,15 @@ def build_setup_panel_embed(
     else:
         if lang == "en":
             ch_text = (
-                "💬 **Discord DM (Direct Notification)**"
+                "**Discord DM (Direct Notification)**"
                 if (is_dm or sub.get("scope") == "user")
-                else "⚠️ **Not bound yet** (click the button below to configure)"
+                else "[Notice] **Not bound yet** (click the button below to configure)"
             )
         else:
             ch_text = (
-                "💬 **Discord 私訊 (DM 直接通知)**"
+                "**Discord 私訊 (DM 直接通知)**"
                 if (is_dm or sub.get("scope") == "user")
-                else "⚠️ **尚未綁定**（請點擊下方按鈕設定）"
+                else "[提示] **尚未綁定**（請點擊下方按鈕設定）"
             )
 
     boards = [b["name"] for b in storage_inst.get_boards()]
@@ -1467,7 +1464,7 @@ def build_setup_panel_embed(
 
     if lang == "en":
         embed = discord.Embed(
-            title="⚙️ PTT Tracking Dispatch Control Center",
+            title="PTT Tracking Dispatch Control Center",
             description=(
                 f"**Scope**: `{scope_label}`\n"
                 "Welcome to PTT Smart Tracker! Use this panel to bind notification channels, "
@@ -1477,12 +1474,12 @@ def build_setup_panel_embed(
             timestamp=datetime.now(),
         )
         embed.add_field(
-            name="📍 Current Alert Target",
+            name="Current Alert Target",
             value=ch_text,
             inline=False,
         )
         embed.add_field(
-            name=f"📋 Monitored Boards ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
+            name=f"Monitored Boards ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
             value=", ".join(f"`{b}`" for b in boards) if boards else "No boards added yet",
             inline=False,
         )
@@ -1492,24 +1489,24 @@ def build_setup_panel_embed(
             else "No keywords configured (click below to add)"
         )
         embed.add_field(
-            name=f"🎯 Configured Keywords ({len(kws)}/{quota.get('max_keywords', 10)})",
+            name=f"Configured Keywords ({len(kws)}/{quota.get('max_keywords', 10)})",
             value=kw_summary,
             inline=False,
         )
         embed.add_field(
-            name="🚀 Quick Setup Guide",
+            name="Quick Setup Guide",
             value=(
-                "1️⃣ Click **\"📌 Bind Channel\"** to set alert target\n"
-                "2️⃣ Select trading boards from dropdown\n"
-                "3️⃣ Click **\"➕ Add Keyword\"** to set item & budget\n"
-                "4️⃣ Click **\"🔔 Test Alert\"** to verify delivery"
+                "1. Click **\"Bind Channel\"** to set alert target\n"
+                "2. Select trading boards from dropdown\n"
+                "3. Click **\"Add Keyword\"** to set item & budget\n"
+                "4. Click **\"Test Alert\"** to verify delivery"
             ),
             inline=False,
         )
-        embed.set_footer(text="PTT-DC-Bot /setup Interactive Panel • 🌐 Language: English (en)")
+        embed.set_footer(text="PTT-DC-Bot /setup Interactive Panel • Language: English (en)")
     else:
         embed = discord.Embed(
-            title="⚙️ PTT-DC-Bot 視覺化互動設定面板",
+            title="PTT-DC-Bot 視覺化互動設定面板",
             description=(
                 f"**歸屬範圍**：`{scope_label}`\n"
                 "歡迎使用 PTT 智慧追蹤機器人！透過本面板，您可以一鍵完成推播頻道綁定、"
@@ -1519,12 +1516,12 @@ def build_setup_panel_embed(
             timestamp=datetime.now(),
         )
         embed.add_field(
-            name="📍 目前推播目標",
+            name="目前推播目標",
             value=ch_text,
             inline=False,
         )
         embed.add_field(
-            name=f"📋 系統監控看板 ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
+            name=f"系統監控看板 ({len(boards)}/{MAX_GLOBAL_ACTIVE_BOARDS})",
             value=", ".join(f"`{b}`" for b in boards) if boards else "尚未加入任何看板",
             inline=False,
         )
@@ -1534,21 +1531,21 @@ def build_setup_panel_embed(
             else "尚未設定關鍵字（點擊下方按鈕新增）"
         )
         embed.add_field(
-            name=f"🎯 已設定追蹤關鍵字 ({len(kws)}/{quota.get('max_keywords', 10)})",
+            name=f"已設定追蹤關鍵字 ({len(kws)}/{quota.get('max_keywords', 10)})",
             value=kw_summary,
             inline=False,
         )
         embed.add_field(
-            name="🚀 快速設定引導",
+            name="快速設定步驟",
             value=(
-                "1️⃣ 點擊 **「📌 綁定此頻道為推播頻道」** 設定通知目標\n"
-                "2️⃣ 在下拉選單中快速勾選要監控的 **熱門交易看板**\n"
-                "3️⃣ 點擊 **「➕ 新增追蹤關鍵字」** 填入想購買的商品與預算上限\n"
-                "4️⃣ 點擊 **「🔔 測試推播通知」** 確認通知卡片正常送達"
+                "1. 點擊 **「綁定此頻道為推播頻道」** 設定通知目標\n"
+                "2. 在下拉選單中快速勾選要監控的 **熱門交易看板**\n"
+                "3. 點擊 **「新增追蹤關鍵字」** 填入想購買的商品與預算上限\n"
+                "4. 點擊 **「測試推播通知」** 確認通知卡片正常送達"
             ),
             inline=False,
         )
-        embed.set_footer(text="PTT-DC-Bot /setup 互動設定面板 • 🌐 語言: 繁體中文 (zh_TW)")
+        embed.set_footer(text="PTT-DC-Bot /setup 互動設定面板 • 語言: 繁體中文 (zh_TW)")
 
     return embed
 
@@ -1558,7 +1555,7 @@ def build_setup_panel_embed(
 # =====================================================================
 @bot.tree.command(
     name="setup",
-    description="⚙️ 開啟視覺化互動設定面板（一鍵綁定推播頻道、熱門看板、新增關鍵字與推播測試）",
+    description="開啟視覺化互動設定面板（一鍵綁定推播頻道、熱門看板、新增關鍵字與推播測試）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1575,7 +1572,7 @@ async def cmd_setup(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     embed = build_setup_panel_embed(sub, scope_label, bot.storage)
@@ -1594,7 +1591,7 @@ async def cmd_setup(
 # =====================================================================
 @bot.tree.command(
     name="ai",
-    description="🧠 用自然語言請 AI 助手幫你尋找看板、設定模糊/精確追蹤、或掃描版上未售出的商品！",
+    description="以自然語言請 AI 助手協助尋找看板、設定追蹤或掃描未售出商品",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1613,7 +1610,7 @@ async def cmd_ai(
     )
     if err or not sub:
         await interaction.response.send_message(
-            err or "❌ 無法識別訂閱身分", ephemeral=True
+            err or "[錯誤] 無法識別訂閱身分", ephemeral=True
         )
         return
 
@@ -1626,7 +1623,7 @@ async def cmd_ai(
     uid_str = str(interaction.user.id)
     if not bot.scheduler.acquire_user_slot(uid_str, "ai"):
         await interaction.response.send_message(
-            "⏳ 您目前已有一個 AI 任務正在執行中，請稍候幾秒鐘再試！", ephemeral=True
+            "[處理中] 目前已有其他 AI 任務正在執行中，請稍候片刻再試。", ephemeral=True
         )
         return
 
@@ -1637,7 +1634,7 @@ async def cmd_ai(
         )
         if not allowed:
             await interaction.followup.send(
-                f"⚠️ 已達今日 AI 智慧助手額度上限（`{used_cnt}/{limit_cnt}` 次）。您仍可使用 `/keyword_add`、`/search` 等指令！"
+                f"[提示] 已達今日 AI 智慧助手額度上限（`{used_cnt}/{limit_cnt}` 次）。您仍可使用 `/keyword_add`、`/search` 等指令。"
             )
             return
 
@@ -1649,15 +1646,15 @@ async def cmd_ai(
             can_write=can_write,
         )
         embed = discord.Embed(
-            title="🧠 PTT AI 智慧助手",
+            title="PTT AI 助手",
             description=answer[:3800],
             color=discord.Color.from_rgb(155, 89, 182),
             timestamp=datetime.now(),
         )
-        embed.add_field(name="💬 您的指令", value=f"`{prompt[:300]}`", inline=False)
+        embed.add_field(name="您的指令", value=f"`{prompt[:300]}`", inline=False)
         if steps:
             embed.add_field(
-                name=f"🔄 AI 遞迴執行的工具步驟 ({len(steps)})",
+                name=f"工具執行步驟 ({len(steps)})",
                 value="\n".join(steps)[:1000],
                 inline=False,
             )
@@ -1667,7 +1664,7 @@ async def cmd_ai(
         await interaction.followup.send(embed=enforce_embed_limits(embed))
     except Exception as e:
         logger.error(f"/ai 指令執行異常: {e}", exc_info=True)
-        await interaction.followup.send("❌ 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。")
+        await interaction.followup.send("[錯誤] 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。")
     finally:
         bot.scheduler.release_user_slot(uid_str, "ai")
 
@@ -1677,7 +1674,7 @@ async def cmd_ai(
 # =====================================================================
 @bot.tree.command(
     name="scan_unsold",
-    description="🕵️ 掃描並篩選過去符合條件且『尚未標示售出（還在賣）』的商品！",
+    description="掃描並篩選過去符合條件且尚未標示售出的商品",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1702,14 +1699,14 @@ async def cmd_scan_unsold(
     )
     if err or not sub:
         await interaction.response.send_message(
-            err or "❌ 無法識別訂閱身分", ephemeral=True
+            err or "[錯誤] 無法識別訂閱身分", ephemeral=True
         )
         return
 
     uid_str = str(interaction.user.id)
     if not bot.scheduler.acquire_user_slot(uid_str, "scan"):
         await interaction.response.send_message(
-            "⏳ 您目前已有一個掃描任務正在進行中，請稍候完成再試！", ephemeral=True
+            "[處理中] 目前已有其他掃描任務正在進行中，請稍候完成再試。", ephemeral=True
         )
         return
 
@@ -1728,7 +1725,7 @@ async def cmd_scan_unsold(
 
         if not target_keywords:
             await interaction.followup.send(
-                f"⚠️ 在 **{scope_label}** 下尚未設定任何 `{board}` 關鍵字，請在指令中填入 `keyword` 參數，或先透過 `/keyword_add` 新增！"
+                f"[提示] 在 **{scope_label}** 下尚未設定任何 `{board}` 關鍵字，請在指令中填入 `keyword` 參數，或先透過 `/keyword_add` 新增！"
             )
             return
 
@@ -1737,7 +1734,7 @@ async def cmd_scan_unsold(
         )
         if not allowed:
             await interaction.followup.send(
-                f"⚠️ 已達今日深度掃描次數上限（`{used_cnt}/{limit_cnt}` 次）。"
+                f"[提示] 已達今日深度掃描次數上限（`{used_cnt}/{limit_cnt}` 次）。"
             )
             return
 
@@ -1763,12 +1760,12 @@ async def cmd_scan_unsold(
 
         for page_idx, chunk in enumerate(item_chunks, start=1):
             embed = discord.Embed(
-                title=f"🕵️ PTT 【{board}】過去未售出商品掃描結果",
+                title=f"PTT 【{board}】未售出商品掃描結果",
                 description=(
-                    f"🎯 **掃描目標關鍵字**：{'、'.join(f'`{k}`' for k in target_keywords)}\n"
-                    f"🔍 **雙重過濾機制**：21天內文章 + 規則引擎 + **多模型交替 AI 語意審核 (`gpt-oss-120b` ⇄ `qwen3.8-27b` ⇄ `gpt-oss-20b`)**\n"
-                    f"🚫 **已自動排除**：「已售出、暫售、已洽談、洽中、預定中、不用再來信、目標品項已售」之文章。\n"
-                    f"✅ **共找到 `{len(unsold_items)}` 篇目前確定仍可購買的商品**："
+                    f"**目標關鍵字**：{'、'.join(f'`{k}`' for k in target_keywords)}\n"
+                    f"**過濾機制**：21天內文章 + 規則引擎 + **多模型交替 AI 語意審核 (`gpt-oss-120b` ⇄ `qwen3.8-27b` ⇄ `gpt-oss-20b`)**\n"
+                    f"**排除條件**：「已售出、暫售、已洽談、洽中、預定中、不用再來信、目標品項已售」之文章\n"
+                    f"**共找到 `{len(unsold_items)}` 篇目前確定可購買的商品**："
                 ),
                 color=discord.Color.green() if unsold_items else discord.Color.orange(),
                 timestamp=datetime.now(),
@@ -1787,11 +1784,11 @@ async def cmd_scan_unsold(
                     loc_str = det.get("extracted_location") or "請見內文"
                     q_cnt = det.get("buyer_queue_count", 0)
                     q_badge = (
-                        f"🔥 {q_cnt}人留言排/私" if q_cnt > 0 else "✨ 尚無人留言排隊"
+                        f"已有 {q_cnt} 人留言排/私" if q_cnt > 0 else "尚無買家排隊"
                     )
                     ai_model = (det.get("ai_verified_by") or "規則引擎").split("/")[-1]
                     ai_note = (
-                        f"\n• 📝 **AI 摘要**：`{det['ai_summary_note']}`"
+                        f"\n• **AI 摘要**：`{det['ai_summary_note']}`"
                         if det.get("ai_summary_note")
                         else ""
                     )
@@ -1799,10 +1796,10 @@ async def cmd_scan_unsold(
                     embed.add_field(
                         name=f"{idx}. [{item['matched_keyword']}] {item['title'][:80]}",
                         value=(
-                            f"• 💰 **目標售價**：`{price_str[:50]}` ｜ 📍 **交易**：`{loc_str[:40]}`\n"
-                            f"• 👤 **作者**：`{item['author']}` ｜ 📅 **日期**：`{item['date']}` ｜ {q_badge}"
+                            f"• **目標售價**：`{price_str[:50]}` ｜ **交易**：`{loc_str[:40]}`\n"
+                            f"• **作者**：`{item['author']}` ｜ **日期**：`{item['date']}` ｜ {q_badge}"
                             f"{ai_note}\n"
-                            f"• 🤖 **審核模型**：`{ai_model}` ｜ 🔗 [點此前往 PTT 查看原文]({item['url']})"
+                            f"• **審核模型**：`{ai_model}` ｜ [前往 PTT 查看原文]({item['url']})"
                         ),
                         inline=False,
                     )
@@ -1845,7 +1842,7 @@ async def cmd_scan_unsold(
 # =====================================================================
 @bot.tree.command(
     name="fuzzy_add",
-    description="🧠 新增『AI 模糊追蹤條件』（例如：預算 6500 元以下有保固的 3060TI、台北面交的雙風扇顯卡）",
+    description="新增 AI 模糊追蹤條件（例如：預算 6500 元以下有保固的 3060TI、台北面交的雙風扇顯卡）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -1876,7 +1873,7 @@ async def cmd_fuzzy_add(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=False)
@@ -1888,7 +1885,7 @@ async def cmd_fuzzy_add(
     if board.upper() != "ALL" and not bot.storage.is_board_tracked(board):
         valid, canonical_name, v_msg = await bot.crawler.verify_board(board)
         if not valid:
-            await interaction.followup.send(f"❌ 看板驗證失敗：{v_msg}")
+            await interaction.followup.send(f"[錯誤] 看板驗證失敗：{v_msg}")
             return
         board = canonical_name
 
@@ -1900,20 +1897,20 @@ async def cmd_fuzzy_add(
         subscriber_id=sub["id"],
     )
     if not ok:
-        await interaction.followup.send(f"⚠️ {rule.get('error', '新增失敗')}")
+        await interaction.followup.send(f"[錯誤] {rule.get('error', '新增失敗')}")
         return
 
     embed = discord.Embed(
-        title="🧠 成功新增 AI 模糊追蹤規則",
+        title="成功新增 AI 模糊追蹤規則",
         description=f"**規則編號 `#{rule['id']}`**：\n> {rule['description']}",
         color=discord.Color.from_rgb(155, 89, 182),
         timestamp=datetime.now(),
     )
-    embed.add_field(name="👤 歸屬範圍", value=f"`{scope_label}`", inline=True)
-    embed.add_field(name="📋 目標看板", value=f"`{rule['board']}`", inline=True)
-    embed.add_field(name="🏷️ 限定分類", value=f"`{rule['category']}`", inline=True)
+    embed.add_field(name="歸屬範圍", value=f"`{scope_label}`", inline=True)
+    embed.add_field(name="目標看板", value=f"`{rule['board']}`", inline=True)
+    embed.add_field(name="限定分類", value=f"`{rule['category']}`", inline=True)
     embed.add_field(
-        name="⚡ 快速初篩詞",
+        name="快速初篩詞",
         value=f"`{rule['hint_keywords'] or '無 (自動審核所有新文章)'}`",
         inline=False,
     )
@@ -1936,7 +1933,7 @@ async def cmd_fuzzy_remove(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     removed = bot.storage.remove_fuzzy_rule(rule, subscriber_id=sub["id"])
@@ -1945,16 +1942,16 @@ async def cmd_fuzzy_remove(
         if user_sub:
             removed = bot.storage.remove_fuzzy_rule(rule, subscriber_id=user_sub["id"])
             if removed:
-                scope_label = f"👤 個人專屬追蹤 ({interaction.user.display_name})"
+                scope_label = f"[個人追蹤] {interaction.user.display_name}"
 
     if not removed:
         await interaction.response.send_message(
-            f"❌ 在 **{scope_label}** 下找不到模糊規則 `{rule}`，請使用 `/fuzzy_list` 查看目前清單。",
+            f"[錯誤] 在 **{scope_label}** 下找不到模糊規則 `{rule}`，請使用 `/fuzzy_list` 查看目前清單。",
             ephemeral=True,
         )
         return
     await interaction.response.send_message(
-        f"🗑️ 已從 **{scope_label}** 移除 AI 模糊追蹤規則 `#{removed['id']}`：「{removed['description']}」"
+        f"[成功] 已從 **{scope_label}** 移除 AI 模糊追蹤規則 `#{removed['id']}`：「{removed['description']}」"
     )
 
 
@@ -1969,27 +1966,27 @@ async def cmd_fuzzy_list(interaction: discord.Interaction, scope: str = "auto"):
     )
     if err or not sub:
         await interaction.response.send_message(
-            err or "❌ 無法識別身分", ephemeral=True
+            err or "[錯誤] 無法識別身分", ephemeral=True
         )
         return
 
     rules = bot.storage.get_fuzzy_rules(subscriber_id=sub["id"])
     embed = discord.Embed(
-        title=f"🧠 目前啟用的 AI 模糊追蹤規則 — {scope_label}",
+        title=f"目前啟用的 AI 模糊追蹤規則 — {scope_label}",
         color=discord.Color.from_rgb(155, 89, 182),
         timestamp=datetime.now(),
     )
     if not rules:
         embed.description = (
             "目前尚未設定任何 AI 模糊追蹤規則。\n"
-            "👉 您可以使用 `/fuzzy_add` 新增，或直接私訊 / `/ai` 告訴 AI 助手（例如：`/ai 幫我模糊追蹤 6500 元以下的 3060Ti`）！"
+            "[提示] 您可以使用 `/fuzzy_add` 新增，或直接私訊 / `/ai` 告訴 AI 助手（例如：`/ai 幫我模糊追蹤 6500 元以下的 3060Ti`）。"
         )
     else:
         lines = []
         for r in rules:
             lines.append(
                 f"**#{r['id']}** 「{r['description']}」\n"
-                f"　📋 看板: `{r['board']}` | 🏷️ 分類: `{r['category']}` | ⚡ 初篩詞: `{r['hint_keywords'] or '全部'}`"
+                f"　看板: `{r['board']}` | 分類: `{r['category']}` | 初篩詞: `{r['hint_keywords'] or '全部'}`"
             )
         embed.description = "\n\n".join(lines)[:3900]
     await interaction.response.send_message(embed=enforce_embed_limits(embed))
@@ -2033,7 +2030,7 @@ async def cmd_keyword_add(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=False)
@@ -2045,7 +2042,7 @@ async def cmd_keyword_add(
     if board.upper() != "ALL" and not bot.storage.is_board_tracked(board):
         valid, canonical_name, v_msg = await bot.crawler.verify_board(board)
         if not valid:
-            await interaction.followup.send(f"❌ 看板驗證失敗：{v_msg}")
+            await interaction.followup.send(f"[錯誤] 看板驗證失敗：{v_msg}")
             return
         board = canonical_name
 
@@ -2057,7 +2054,7 @@ async def cmd_keyword_add(
         max_price=max_price,
     )
     if not ok:
-        await interaction.followup.send(f"⚠️ {msg}")
+        await interaction.followup.send(f"[錯誤] {msg}")
         return
 
     push_ch = sub.get("push_channel_id")
@@ -2073,13 +2070,13 @@ async def cmd_keyword_add(
     total_kws = len(bot.storage.get_keywords(subscriber_id=sub["id"]))
 
     embed = discord.Embed(
-        title="✅ 成功新增精確追蹤關鍵字",
+        title="成功新增精確追蹤關鍵字",
         description=msg,
         color=discord.Color.green(),
         timestamp=datetime.now(),
     )
     embed.add_field(
-        name="📢 推播設定",
+        name="推播設定",
         value=f"• 歸屬範圍：`{scope_label}`\n• 推播目標：{target_desc}\n• 目前精確關鍵字數：`{total_kws}` 組",
         inline=False,
     )
@@ -2088,7 +2085,7 @@ async def cmd_keyword_add(
 
 @bot.tree.command(
     name="keyword_edit",
-    description="✏️ 修改已設定的精確關鍵字文字或最高預算上限（max_price）",
+    description="修改已設定的精確關鍵字文字或最高預算上限（max_price）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2111,7 +2108,7 @@ async def cmd_keyword_edit(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     clear_price = max_price == 0
@@ -2134,12 +2131,12 @@ async def cmd_keyword_edit(
                 clear_max_price=clear_price,
             )
             if ok:
-                scope_label = f"👤 個人專屬追蹤 ({interaction.user.display_name})"
+                scope_label = f"[個人追蹤] {interaction.user.display_name}"
 
     if not ok:
-        await interaction.response.send_message(f"⚠️ {msg}", ephemeral=True)
+        await interaction.response.send_message(f"[錯誤] {msg}", ephemeral=True)
         return
-    await interaction.response.send_message(f"✏️ **{scope_label}**：{msg}")
+    await interaction.response.send_message(f"[成功] **{scope_label}**：{msg}")
 
 
 @bot.tree.command(name="keyword_remove", description="移除已設定的精確追蹤關鍵字")
@@ -2158,7 +2155,7 @@ async def cmd_keyword_remove(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     removed = bot.storage.remove_keyword(keyword, subscriber_id=sub["id"])
@@ -2167,17 +2164,17 @@ async def cmd_keyword_remove(
         if user_sub:
             removed = bot.storage.remove_keyword(keyword, subscriber_id=user_sub["id"])
             if removed:
-                scope_label = f"👤 個人專屬追蹤 ({interaction.user.display_name})"
+                scope_label = f"[個人追蹤] {interaction.user.display_name}"
 
     if not removed:
         await interaction.response.send_message(
-            f"❌ 在 **{scope_label}** 下找不到關鍵字或編號 `{keyword}`，請使用 `/keyword_list` 查看目前清單。",
+            f"[錯誤] 在 **{scope_label}** 下找不到關鍵字或編號 `{keyword}`，請使用 `/keyword_list` 查看目前清單。",
             ephemeral=True,
         )
         return
 
     await interaction.response.send_message(
-        f"🗑️ 已從 **{scope_label}** 移除關鍵字：`{removed['keyword']}` (看板: `{removed['board']}`, 分類: `{removed['category']}`)"
+        f"[成功] 已從 **{scope_label}** 移除關鍵字：`{removed['keyword']}` (看板: `{removed['board']}`, 分類: `{removed['category']}`)"
     )
 
 
@@ -2194,7 +2191,7 @@ async def cmd_keyword_list(interaction: discord.Interaction, scope: str = "auto"
     )
     if err or not sub:
         await interaction.response.send_message(
-            err or "❌ 無法識別身分", ephemeral=True
+            err or "[錯誤] 無法識別身分", ephemeral=True
         )
         return
 
@@ -2202,7 +2199,7 @@ async def cmd_keyword_list(interaction: discord.Interaction, scope: str = "auto"
     fuzzy_rules = bot.storage.get_fuzzy_rules(subscriber_id=sub["id"])
     push_mode = sub.get("push_mode", "keyword")
     push_ch = sub.get("push_channel_id")
-    enabled_str = "✅ 啟用中" if sub.get("enabled", 1) else "⏸️ 已暫停通知 (`/resume` 可恢復)"
+    enabled_str = "[啟用中]" if sub.get("enabled", 1) else "[已暫停] (可使用 `/resume` 恢復)"
     target_str = (
         f"<#{push_ch}>"
         if push_ch
@@ -2215,12 +2212,12 @@ async def cmd_keyword_list(interaction: discord.Interaction, scope: str = "auto"
     )
 
     embed = discord.Embed(
-        title=f"🔍 追蹤關鍵字與 AI 模糊規則清單 — {scope_label}",
+        title=f"追蹤關鍵字與 AI 模糊規則清單 — {scope_label}",
         color=discord.Color.blue(),
         timestamp=datetime.now(),
     )
     embed.add_field(
-        name="⚙️ 推播目標與模式",
+        name="推播目標與模式",
         value=f"• 推播狀態：{enabled_str}\n• 推播目標：{target_str}\n• 推播模式：`{mode_desc}`",
         inline=False,
     )
@@ -2231,7 +2228,7 @@ async def cmd_keyword_list(interaction: discord.Interaction, scope: str = "auto"
         for kw in keywords
     ] or ["尚未設定精確關鍵字（可用 `/keyword_add` 或直接私訊 AI 新增）"]
     embed.add_field(
-        name=f"🎯 精確關鍵字 ({len(keywords)})",
+        name=f"精確關鍵字 ({len(keywords)})",
         value="\n".join(kw_lines)[:1000],
         inline=False,
     )
@@ -2241,7 +2238,7 @@ async def cmd_keyword_list(interaction: discord.Interaction, scope: str = "auto"
         for r in fuzzy_rules
     ] or ["尚未設定 AI 模糊規則（可用 `/fuzzy_add` 或 `/ai` 新增）"]
     embed.add_field(
-        name=f"🧠 AI 模糊追蹤規則 ({len(fuzzy_rules)})",
+        name=f"AI 語意追蹤規則 ({len(fuzzy_rules)})",
         value="\n".join(fz_lines)[:1000],
         inline=False,
     )
@@ -2259,11 +2256,11 @@ async def cmd_keyword_clear(interaction: discord.Interaction, scope: str = "auto
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
     count = bot.storage.clear_keywords(subscriber_id=sub["id"])
     await interaction.response.send_message(
-        f"🧹 已清空 **{scope_label}** 下的所有精確關鍵字（共移除 `{count}` 組）。"
+        f"[成功] 已清空 **{scope_label}** 下的所有精確關鍵字（共移除 `{count}` 組）。"
     )
 
 
@@ -2288,14 +2285,14 @@ async def cmd_board_add(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     await interaction.response.defer(ephemeral=False)
 
     valid, canonical_name, msg = await bot.crawler.verify_board(board)
     if not valid:
-        await interaction.followup.send(f"❌ 無法新增看板：{msg}")
+        await interaction.followup.send(f"[錯誤] 無法新增看板：{msg}")
         return
 
     if not bot.storage.is_board_tracked(canonical_name):
@@ -2306,19 +2303,19 @@ async def cmd_board_add(
             and len(sub_boards) >= quota.get("max_boards", 5)
         ):
             await interaction.followup.send(
-                f"⚠️ 您在 **{scope_label}** 追蹤的不同看板數已達上限（`{quota.get('max_boards', 5)}` 個）。"
+                f"[警告] 您在 **{scope_label}** 追蹤的不同看板數已達上限（`{quota.get('max_boards', 5)}` 個）。"
             )
             return
         if len(bot.storage.get_boards()) >= MAX_GLOBAL_ACTIVE_BOARDS:
             await interaction.followup.send(
-                f"⚠️ 全系統活躍盯梢看板數已達安全上限（`{MAX_GLOBAL_ACTIVE_BOARDS}` 個）。"
+                f"[警告] 全系統活躍盯梢看板數已達安全上限（`{MAX_GLOBAL_ACTIVE_BOARDS}` 個）。"
             )
             return
 
     added = bot.storage.add_board(canonical_name)
     if not added:
         await interaction.followup.send(
-            f"ℹ️ 看板 `{canonical_name}` 已經在系統盯梢清單中了！"
+            f"[資訊] 看板 `{canonical_name}` 已經在系統盯梢清單中了。"
         )
         return
 
@@ -2332,11 +2329,11 @@ async def cmd_board_add(
         )
 
     embed = discord.Embed(
-        title="✅ 成功新增追蹤看板",
+        title="成功新增追蹤看板",
         description=(
             f"已將 PTT **`{canonical_name}`** 加入背景盯梢清單！\n"
-            f"🔗 看板網址：https://www.ptt.cc/bbs/{canonical_name}/index.html\n"
-            f"📦 已載入目前版面 `{len(articles)}` 篇文章作為基準，請記得使用 `/keyword_add` 或 `/fuzzy_add` 新增該看板的追蹤條件！"
+            f"看板網址：https://www.ptt.cc/bbs/{canonical_name}/index.html\n"
+            f"已載入目前版面 `{len(articles)}` 篇文章作為基準，請記得使用 `/keyword_add` 或 `/fuzzy_add` 新增該看板的追蹤條件！"
         ),
         color=discord.Color.green(),
         timestamp=datetime.now(),
@@ -2360,7 +2357,7 @@ async def cmd_board_remove(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     # Remove this subscriber's rules on that board
@@ -2375,16 +2372,16 @@ async def cmd_board_remove(
         removed = bot.storage.remove_board(board)
         if not removed:
             await interaction.response.send_message(
-                f"❌ 目前並未追蹤看板 `{board}`，請使用 `/board_list` 查看清單。",
+                f"[錯誤] 目前並未追蹤看板 `{board}`，請使用 `/board_list` 查看清單。",
                 ephemeral=True,
             )
             return
         await interaction.response.send_message(
-            f"🗑️ 已停止追蹤 PTT **`{removed}`** 看板。"
+            f"[成功] 已停止追蹤 PTT **`{removed}`** 看板。"
         )
     else:
         await interaction.response.send_message(
-            f"🗑️ 已清空 **{scope_label}** 在看板 `{board}` 的追蹤規則（因其他訂閱者仍有設定此看板規則，系統將維持看板背景巡檢）。"
+            f"[成功] 已清空 **{scope_label}** 在看板 `{board}` 的追蹤規則（因其他訂閱者仍有設定此看板規則，系統將維持看板背景巡檢）。"
         )
 
 
@@ -2396,7 +2393,7 @@ async def cmd_board_remove(
 async def cmd_board_list(interaction: discord.Interaction):
     boards = bot.storage.get_boards()
     embed = discord.Embed(
-        title="📋 目前盯梢追蹤的 PTT 看板清單",
+        title="目前盯梢追蹤的 PTT 看板清單",
         color=discord.Color.blurple(),
         timestamp=datetime.now(),
     )
@@ -2408,7 +2405,7 @@ async def cmd_board_list(interaction: discord.Interaction):
             kws = bot.storage.get_keywords(board=b["name"])
             fzs = bot.storage.get_fuzzy_rules(board=b["name"])
             embed.add_field(
-                name=f"📌 {b['name']}",
+                name=f"{b['name']}",
                 value=(
                     f"• 狀態：`{b['last_status']}`\n"
                     f"• 全系統綁定條件：精確關鍵字 `{len(kws)}` 組 / AI 模糊規則 `{len(fzs)}` 組\n"
@@ -2443,27 +2440,27 @@ async def cmd_channel_set(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     if sub["scope"] == "user" and channel is None and interaction.guild is None:
         bot.storage.update_subscriber_channel(sub["id"], None)
         await interaction.response.send_message(
-            "✅ 已將您的 **個人專屬追蹤** 設定為直接發送至 **Discord 私訊 (DM)**！"
+            "[成功] 已將您的 **個人專屬追蹤** 設定為直接發送至 **Discord 私訊 (DM)**！"
         )
         return
 
     target_channel = channel or interaction.channel
     if target_channel is None or not hasattr(target_channel, "id"):
         await interaction.response.send_message(
-            "❌ 無法識別目標頻道，請明確指定一個伺服器文字頻道。", ephemeral=True
+            "[錯誤] 無法識別目標頻道，請明確指定一個伺服器文字頻道。", ephemeral=True
         )
         return
 
     ch_guild = getattr(target_channel, "guild", None)
     if ch_guild is None or interaction.guild is None or ch_guild.id != interaction.guild.id:
         await interaction.response.send_message(
-            "❌ 目標推播頻道必須屬於目前所在的伺服器文字頻道。", ephemeral=True
+            "[錯誤] 目標推播頻道必須屬於目前所在的伺服器文字頻道。", ephemeral=True
         )
         return
 
@@ -2472,7 +2469,7 @@ async def cmd_channel_set(
         interaction.user, ch_guild
     ):
         await interaction.response.send_message(
-            "🔒 將個人追蹤通知導向伺服器文字頻道需要該伺服器的 `管理伺服器` 或 `管理頻道` 權限（一般使用者預設透過 Discord 私訊 DM 接收通知）。",
+            "[權限不足] 將個人追蹤通知導向伺服器文字頻道需要該伺服器的 `管理伺服器` 或 `管理頻道` 權限（一般使用者預設透過 Discord 私訊 DM 接收通知）。",
             ephemeral=True,
         )
         return
@@ -2482,14 +2479,14 @@ async def cmd_channel_set(
         perms = target_channel.permissions_for(bot_member)
         if not (perms.send_messages and perms.embed_links):
             await interaction.response.send_message(
-                f"⚠️ 機器人在 <#{target_channel.id}> 缺少 `發送訊息 (Send Messages)` 或 `嵌入連結 (Embed Links)` 權限，請先調整頻道權限後再試！",
+                f"[警告] 機器人在 <#{target_channel.id}> 缺少 `發送訊息 (Send Messages)` 或 `嵌入連結 (Embed Links)` 權限，請先調整頻道權限後再試！",
                 ephemeral=True,
             )
             return
 
     bot.storage.update_subscriber_channel(sub["id"], str(target_channel.id))
     await interaction.response.send_message(
-        f"✅ 已將 **{scope_label}** 的推播頻道設定為 <#{target_channel.id}> (`{target_channel.id}`)！"
+        f"[成功] 已將 **{scope_label}** 的推播頻道設定為 <#{target_channel.id}> (`{target_channel.id}`)！"
     )
 
 
@@ -2506,10 +2503,10 @@ async def cmd_channel_set(
 @app_commands.choices(
     mode=[
         app_commands.Choice(
-            name="🎯 僅推播符合精確關鍵字或 AI 模糊規則的文章（預設）", value="keyword"
+            name="僅推播符合精確關鍵字或 AI 模糊規則的文章（預設）", value="keyword"
         ),
         app_commands.Choice(
-            name="📢 推播所有新文章（僅限管理員開啟）", value="all"
+            name="推播所有新文章（僅限管理員開啟）", value="all"
         ),
     ],
     scope=SCOPE_CHOICES,
@@ -2521,27 +2518,27 @@ async def cmd_push_mode(
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
 
     if mode == "all" and sub.get("tier") != "owner":
         await interaction.response.send_message(
-            "⚠️ 為避免洗版與觸發速率限制，「推播所有新文章 (`all`)」模式僅開放給主伺服器管理員使用。一般追蹤請使用預設的 `keyword` 精準/模糊比對模式！",
+            "[提示] 為避免洗版與觸發速率限制，「推播所有新文章 (`all`)」模式僅開放給主伺服器管理員使用。一般追蹤請使用預設的 `keyword` 精準/模糊比對模式！",
             ephemeral=True,
         )
         return
 
     bot.storage.update_subscriber_mode(sub["id"], mode)
     if mode == "keyword":
-        msg = f"🎯 已將 **{scope_label}** 切換為 **「僅推播符合條件的新文章」** 模式！"
+        msg = f"[設定] 已將 **{scope_label}** 切換為 **「僅推播符合條件的新文章」** 模式！"
     else:
-        msg = f"📢 已將 **{scope_label}** 切換為 **「推播所有新文章」** 模式！"
+        msg = f"[設定] 已將 **{scope_label}** 切換為 **「推播所有新文章」** 模式！"
     await interaction.response.send_message(msg)
 
 
 @bot.tree.command(
     name="pause",
-    description="⏸️ 暫停接收目前範圍的推播通知（保留所有已設定的關鍵字與模糊規則）",
+    description="暫停接收目前範圍的推播通知（保留所有已設定的關鍵字與模糊規則）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2552,17 +2549,17 @@ async def cmd_pause(interaction: discord.Interaction, scope: str = "auto"):
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
     bot.storage.set_subscriber_enabled(sub["id"], False)
     await interaction.response.send_message(
-        f"⏸️ 已暫停 **{scope_label}** 的自動推播通知（您的所有追蹤規則均完整保留，隨時可輸入 `/resume` 恢復通知）。"
+        f"[資訊] 已暫停 **{scope_label}** 的自動推播通知（您的所有追蹤規則均完整保留，隨時可輸入 `/resume` 恢復通知）。"
     )
 
 
 @bot.tree.command(
     name="resume",
-    description="▶️ 恢復接收目前範圍的推播通知",
+    description="恢復接收目前範圍的推播通知",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2573,11 +2570,11 @@ async def cmd_resume(interaction: discord.Interaction, scope: str = "auto"):
         interaction, scope_choice=scope, require_write_perm=True
     )
     if err or not sub:
-        await interaction.response.send_message(err or "❌ 權限不足", ephemeral=True)
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
         return
     bot.storage.set_subscriber_enabled(sub["id"], True)
     await interaction.response.send_message(
-        f"▶️ 已恢復 **{scope_label}** 的自動推播通知！"
+        f"[成功] 已恢復 **{scope_label}** 的自動推播通知！"
     )
 
 
@@ -2605,14 +2602,14 @@ async def cmd_search(
     if now - last_search < SEARCH_COOLDOWN_SEC:
         rem = max(1, int(SEARCH_COOLDOWN_SEC - (now - last_search)))
         await interaction.response.send_message(
-            f"⏳ 搜尋冷卻中：為防範 PTT 爬蟲連線過載，請等待 {rem} 秒後再試！",
+            f"[冷卻中] 搜尋冷卻中：為防範 PTT 爬蟲連線過載，請等待 {rem} 秒後再試！",
             ephemeral=True,
         )
         return
 
     if not bot.scheduler.acquire_user_slot(uid_str, "search"):
         await interaction.response.send_message(
-            "⚠️ 您的另一個搜尋任務仍在進行中，請稍候片刻完成後再試！",
+            "[提示] 您的另一個搜尋任務仍在進行中，請稍候片刻完成後再試！",
             ephemeral=True,
         )
         return
@@ -2628,11 +2625,11 @@ async def cmd_search(
             board, keyword, max_pages=pages
         )
         if not ok:
-            await interaction.followup.send(f"❌ 搜尋看板 `{board}` 失敗：{status_msg}")
+            await interaction.followup.send(f"[錯誤] 搜尋看板 `{board}` 失敗：{status_msg}")
             return
 
         embed = discord.Embed(
-            title=f"🔎 PTT 【{board}】搜尋結果：{keyword}",
+            title=f"PTT 【{board}】搜尋結果：{keyword}",
             description=f"共找到 **`{len(articles)}`** 篇相關文章（若要自動過濾已售出文章，請使用 `/scan_unsold`）：",
             color=discord.Color.gold() if articles else discord.Color.light_grey(),
             timestamp=datetime.now(),
@@ -2649,7 +2646,7 @@ async def cmd_search(
             for idx, art in enumerate(articles[:12], start=1):
                 lines.append(
                     f"**{idx}.** [{art['title']}]({art['url']})\n"
-                    f"　👤 `{art['author']}` | 📅 `{art['date']}` | 推文: `{art['nrec']}`"
+                    f"　作者: `{art['author']}` | 日期: `{art['date']}` | 推文: `{art['nrec']}`"
                 )
             embed.add_field(
                 name=f"搜尋結果（顯示前 {min(12, len(articles))} 篇）",
@@ -2660,14 +2657,14 @@ async def cmd_search(
         await interaction.followup.send(embed=enforce_embed_limits(embed))
     except Exception as e:
         logger.error(f"/search 指令執行異常: {e}", exc_info=True)
-        await interaction.followup.send("❌ 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。")
+        await interaction.followup.send("[錯誤] 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。")
     finally:
         bot.scheduler.release_user_slot(uid_str, "search")
 
 
 @bot.tree.command(
     name="me",
-    description="👤 查看您個人的專屬追蹤設定、私訊推播狀態與今日 AI 額度",
+    description="查看您個人的專屬追蹤設定、私訊推播狀態與今日 AI 額度",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2683,23 +2680,23 @@ async def cmd_me(interaction: discord.Interaction):
     used_scan = bot.storage.get_daily_usage(user_sub["id"], "scan")
 
     if not user_sub.get("enabled", 1):
-        dm_status = "⏸️ 已暫停推播（輸入 `/resume` 可隨時恢復）"
+        dm_status = "[暫停] 已暫停推播（輸入 `/resume` 可隨時恢復）"
     elif user_sub.get("dm_failed"):
-        dm_status = "⚠️ 曾發生私訊失敗（請確認已開啟允許伺服器成員私訊，或直接私訊機器人一次即可恢復）"
+        dm_status = "[警告] 曾發生私訊失敗（請確認已開啟允許伺服器成員私訊，或直接私訊機器人一次即可恢復）"
     elif user_sub.get("push_channel_id"):
-        dm_status = f"📢 自訂頻道：<#{user_sub['push_channel_id']}>"
+        dm_status = f"[自訂頻道] <#{user_sub['push_channel_id']}>"
     else:
-        dm_status = "✅ 正常（命中時直接私訊通知您）"
+        dm_status = "[正常] 正常（命中時直接私訊通知您）"
 
     embed = discord.Embed(
-        title=f"👤 {interaction.user.display_name} 的個人專屬追蹤面板",
-        description="您可以**直接私訊 (DM) 機器人**用自然語言對話，或在任何地方使用 Slash 指令並將 `scope` 設為 `👤 個人專屬追蹤`！",
+        title=f"{interaction.user.display_name} 的個人專屬追蹤面板",
+        description="您可以**直接私訊 (DM) 機器人**用自然語言對話，或在任何地方使用 Slash 指令並將 `scope` 設為 `[個人追蹤]`！",
         color=discord.Color.from_rgb(46, 204, 113),
         timestamp=datetime.now(),
     )
-    embed.add_field(name="📬 私訊推播狀態", value=dm_status, inline=False)
+    embed.add_field(name="私訊推播狀態", value=dm_status, inline=False)
     embed.add_field(
-        name="📊 今日配額使用量",
+        name="今日配額使用量",
         value=(
             f"• 身分等級：`{user_sub.get('tier', 'friend')}`\n"
             f"• AI 對話次數：`{used_ai} / {quota['daily_ai_chats']}` 次\n"
@@ -2719,7 +2716,7 @@ async def cmd_me(interaction: discord.Interaction):
         or "尚未設定個人關鍵字（直接私訊機器人說：`幫我追蹤 4070` 即可新增！）"
     )
     embed.add_field(
-        name=f"🎯 您的個人精確關鍵字 ({len(u_kws)})",
+        name=f"個人精確關鍵字 ({len(u_kws)})",
         value=kw_str[:1000],
         inline=False,
     )
@@ -2732,7 +2729,7 @@ async def cmd_me(interaction: discord.Interaction):
         or "尚未設定個人 AI 模糊規則"
     )
     embed.add_field(
-        name=f"🧠 您的個人 AI 模糊規則 ({len(u_fzs)})",
+        name=f"個人 AI 模糊規則 ({len(u_fzs)})",
         value=fz_str[:1000],
         inline=False,
     )
@@ -2743,7 +2740,7 @@ async def cmd_me(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="forget_me",
-    description="🗑️ 一鍵清除您個人的所有追蹤規則、推播紀錄與 AI 對話記憶（隱私清除）",
+    description="一鍵清除您個人的所有追蹤規則、推播紀錄與 AI 對話記憶（隱私清除）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2752,18 +2749,18 @@ async def cmd_forget_me(interaction: discord.Interaction):
     removed = bot.storage.forget_subscriber("user", uid_str)
     if removed:
         await interaction.response.send_message(
-            "🗑️ 已完整刪除您個人的所有追蹤關鍵字、AI 模糊規則、推播紀錄與對話記憶。未來若想再次使用，隨時私訊機器人即可重新開始！",
+            "[成功] 已完整刪除您個人的所有追蹤關鍵字、AI 語意規則、推播紀錄與對話記憶。未來若想再次使用，隨時私訊機器人即可重新開始！",
             ephemeral=True,
         )
     else:
         await interaction.response.send_message(
-            "ℹ️ 目前系統中沒有您的個人追蹤資料。", ephemeral=True
+            "[提示] 目前系統中沒有您的個人追蹤資料。", ephemeral=True
         )
 
 
 @bot.tree.command(
     name="admin",
-    description="🛡️ 系統管理員專用指令（檢視全系統訂閱戶、調整配額等級、管理黑名單）",
+    description="系統管理員專用指令（檢視全系統訂閱戶、調整配額等級、管理黑名單）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2774,10 +2771,10 @@ async def cmd_forget_me(interaction: discord.Interaction):
 )
 @app_commands.choices(
     action=[
-        app_commands.Choice(name="📊 檢視全系統訂閱戶與統計 (stats)", value="stats"),
-        app_commands.Choice(name="⭐ 調整訂閱戶配額等級 (set_tier)", value="set_tier"),
-        app_commands.Choice(name="🚫 加入黑名單 (blacklist)", value="blacklist"),
-        app_commands.Choice(name="✅ 解除黑名單 (unblacklist)", value="unblacklist"),
+        app_commands.Choice(name="檢視全系統訂閱戶與統計 (stats)", value="stats"),
+        app_commands.Choice(name="調整訂閱戶配額等級 (set_tier)", value="set_tier"),
+        app_commands.Choice(name="加入黑名單 (blacklist)", value="blacklist"),
+        app_commands.Choice(name="解除黑名單 (unblacklist)", value="unblacklist"),
     ],
     tier=[
         app_commands.Choice(name="friend (朋友個人追蹤配額)", value="friend"),
@@ -2798,7 +2795,7 @@ async def cmd_admin(
     )
     if not is_authorized:
         await interaction.response.send_message(
-            "🚫 此指令僅限系統管理員執行。", ephemeral=True
+            "[權限不足] 此指令僅限系統管理員執行。", ephemeral=True
         )
         return
 
@@ -2812,7 +2809,7 @@ async def cmd_admin(
             for s in subs[:25]
         ]
         embed = discord.Embed(
-            title="🛡️ 系統管理員總覽 (Multi-Tenant Stats)",
+            title="系統管理員總覽 (Multi-Tenant Stats)",
             description=(
                 f"• 活躍訂閱戶：`{len(subs)}` 組\n"
                 f"• 全系統精確關鍵字：`{len(all_kws)}` 組 ｜ 模糊規則：`{len(all_fzs)}` 組\n"
@@ -2822,7 +2819,7 @@ async def cmd_admin(
             timestamp=datetime.now(),
         )
         embed.add_field(
-            name="👥 訂閱戶清單 (前 25 筆)",
+            name="訂閱戶清單 (前 25 筆)",
             value="\n".join(lines)[:1000] or "無",
             inline=False,
         )
@@ -2831,7 +2828,7 @@ async def cmd_admin(
 
     if not target_id or not target_id.strip():
         await interaction.response.send_message(
-            "⚠️ 請提供 `target_id`（Discord User ID 或 Guild ID）。", ephemeral=True
+            "[警告] 請提供 `target_id`（Discord User ID 或 Guild ID）。", ephemeral=True
         )
         return
 
@@ -2842,35 +2839,35 @@ async def cmd_admin(
         )
         if not sub:
             await interaction.response.send_message(
-                f"❌ 找不到對應 `{tid}` 的訂閱戶。", ephemeral=True
+                f"[錯誤] 找不到對應 `{tid}` 的訂閱戶。", ephemeral=True
             )
             return
         bot.storage.set_subscriber_tier(sub["scope"], sub["discord_id"], tier)
         await interaction.response.send_message(
-            f"✅ 已將訂閱戶 `#{sub['id']}` (`{tid}`) 的配額等級調整為 **`{tier}`**！",
+            f"[成功] 已將訂閱戶 `#{sub['id']}` (`{tid}`) 的配額等級調整為 **`{tier}`**！",
             ephemeral=True,
         )
     elif action == "blacklist":
         bot.storage.set_blacklist(tid, True)
         await interaction.response.send_message(
-            f"🚫 已將 `{tid}` 加入黑名單。", ephemeral=True
+            f"[成功] 已將 `{tid}` 加入黑名單。", ephemeral=True
         )
     elif action == "unblacklist":
         bot.storage.set_blacklist(tid, False)
         await interaction.response.send_message(
-            f"✅ 已將 `{tid}` 從黑名單移除。", ephemeral=True
+            f"[成功] 已將 `{tid}` 從黑名單移除。", ephemeral=True
         )
 
 
 @bot.tree.command(
     name="help",
-    description="📖 查看 PTT 智慧追蹤機器人的完整使用教學（支援朋友私訊、多伺服器與 AI 語意追蹤）",
+    description="查看 PTT 智慧追蹤機器人的完整使用教學（支援朋友私訊、多伺服器與 AI 語意追蹤）",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 async def cmd_help(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="📖 PTT 二手硬體 & 看板智慧追蹤機器人 — 使用指南",
+        title="PTT 二手硬體 & 看板智慧追蹤機器人 — 使用指南",
         description=(
             "本機器人支援 **多使用者個人私訊追蹤** 與 **多伺服器共用頻道推播**，並內建 **Groq 多模型交替 AI 語意審核**，自動幫您過濾「已售出、已洽談、不用再來信」的文章！"
         ),
@@ -2878,28 +2875,28 @@ async def cmd_help(interaction: discord.Interaction):
         timestamp=datetime.now(),
     )
     embed.add_field(
-        name="💬 方式一：直接私訊 (DM) 機器人開始個人追蹤（最推薦朋友使用！）",
+        name="方式一：直接私訊 (DM) 機器人開始個人追蹤（推薦使用）",
         value=(
             "• 點擊機器人頭像 → **「傳送訊息 (Message)」**，直接用自然語言跟它說話即可：\n"
-            "  👉 `幫我追蹤 HardwareSale 板的 4070S 跟 7800XT`\n"
-            "  👉 `幫我追蹤 6500 元以下、有保固的 3060Ti`\n"
-            "  👉 `幫我掃描目前版上還沒賣掉的 3060TI 跟 6700XT`\n"
-            "  👉 `幫我找賣二手相機或蘋果產品的 PTT 看板並加入追蹤`\n"
+            "  • `幫我追蹤 HardwareSale 板的 4070S 跟 7800XT`\n"
+            "  • `幫我追蹤 6500 元以下、有保固的 3060Ti`\n"
+            "  • `幫我掃描目前版上還沒賣掉的 3060TI 跟 6700XT`\n"
+            "  • `幫我找賣二手相機或蘋果產品的 PTT 看板並加入追蹤`\n"
             "• 在私訊中設定的規則全部屬於您**個人專屬**，新商品上架時會直接**私訊通知您**，不會打擾伺服器頻道！"
         ),
         inline=False,
     )
     embed.add_field(
-        name="🏠 方式二：邀請至朋友的伺服器共用推播",
+        name="方式二：邀請至伺服器共用推播",
         value=(
             "• 邀請機器人進入伺服器後，管理員可使用 `/channel_set` 設定推播頻道。\n"
             "• 在伺服器頻道中輸入 `@PTT機器人` 或 `/keyword_add`、`/fuzzy_add`，預設會管理該**伺服器的共用追蹤清單**。\n"
-            "• 若在伺服器內想操作自己的個人私訊追蹤，只要在指令的 `scope` 選擇 `👤 個人專屬追蹤` 即可！"
+            "• 若在伺服器內想操作自己的個人私訊追蹤，只要在指令的 `scope` 選擇 `[個人追蹤]` 即可！"
         ),
         inline=False,
     )
     embed.add_field(
-        name="⚡ 進階精確關鍵字語法（排除字 `-` 與預算上限 `max_price`）",
+        name="進階精確關鍵字語法（排除字 - 與預算上限 max_price）",
         value=(
             "• **空白分隔（同時包含）**：`台北 3060TI`（標題須同時有台北與 3060TI）\n"
             "• **負向排除字（`-` 開頭）**：`3060 -ti -筆電 -礦`（追蹤純 3060，排除 3060Ti、筆電與礦卡）\n"
@@ -2908,7 +2905,7 @@ async def cmd_help(interaction: discord.Interaction):
         inline=False,
     )
     embed.add_field(
-        name="🛠️ 常用 Slash 指令一覽",
+        name="常用 Slash 指令一覽",
         value=(
             "• `/ai`：用自然語言請 AI 助手設定規則、找看板或查行情\n"
             "• `/scan_unsold`：掃描過去符合條件且**尚未售出/未洽談**的商品\n"
@@ -2930,14 +2927,14 @@ async def cmd_help(interaction: discord.Interaction):
 async def cmd_check_now(interaction: discord.Interaction):
     uid_str = str(interaction.user.id)
     if bot.storage.is_blacklisted(uid_str):
-        await interaction.response.send_message("🚫 您的帳號已被限制使用。", ephemeral=True)
+        await interaction.response.send_message("[權限不足] 您的帳號已被限制使用。", ephemeral=True)
         return
 
     now = time.time()
     if not is_bot_owner(uid_str) and now - bot._last_manual_check_ts < 300:
         remain = int(300 - (now - bot._last_manual_check_ts))
         await interaction.response.send_message(
-            f"⏳ 系統剛執行過手動巡檢，請於 `{remain}` 秒後再試（背景自動巡檢仍持續運作中）。",
+            f"[提示] 系統剛執行過手動巡檢，請於 `{remain}` 秒後再試（背景自動巡檢仍持續運作中）。",
             ephemeral=True,
         )
         return
@@ -2946,7 +2943,7 @@ async def cmd_check_now(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=False)
     summary = await bot.run_single_poll_cycle()
     await interaction.followup.send(
-        f"✅ 手動巡檢完成！\n"
+        f"[成功] 手動巡檢完成！\n"
         f"• 實際掃描看板數：`{summary['checked_boards']}`\n"
         f"• 發現新文章數：`{summary['new_articles']}`\n"
         f"• 本次推播數：`{summary['pushed']}`"
@@ -2955,7 +2952,7 @@ async def cmd_check_now(interaction: discord.Interaction):
 
 @bot.tree.command(
     name="status",
-    description="查看機器人完整狀態、精確關鍵字、AI 模糊規則與 Groq 佇列負載",
+    description="查看機器人完整狀態、精確關鍵字、AI 語意規則與 Groq 佇列負載",
 )
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
@@ -2967,7 +2964,7 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
     )
     if err or not sub:
         await interaction.response.send_message(
-            err or "❌ 無法識別身分", ephemeral=True
+            err or "[錯誤] 無法識別身分", ephemeral=True
         )
         return
 
@@ -2989,12 +2986,12 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
     )
 
     embed = discord.Embed(
-        title=f"📊 PTT 智慧追蹤機器人運作狀態 — {scope_label}",
+        title=f"PTT 智慧追蹤機器人運作狀態 — {scope_label}",
         color=discord.Color.orange() if in_cd else discord.Color.green(),
         timestamp=datetime.now(),
     )
     embed.add_field(
-        name="📢 當前推播目標",
+        name="當前推播目標",
         value=target_str,
         inline=True,
     )
@@ -3004,16 +3001,16 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
             f"`{m_short}`: {m_info['used']}次 (餘{m_info['rem_tok']}tok)"
         )
     embed.add_field(
-        name=f"🧠 Groq 排程佇列 (排隊:{q_status['queue_size']})",
+        name=f"Groq 排程佇列 (排隊:{q_status['queue_size']})",
         value="\n".join(model_parts) or "就緒",
         inline=True,
     )
     embed.add_field(
-        name="🛡️ 防封鎖 & 多租戶",
+        name="防封鎖 & 多租戶",
         value=(
-            f"⚠️ 冷卻中 ({cd_remain}s)"
+            f"[冷卻中] ({cd_remain}s)"
             if in_cd
-            else f"✅ 正常 (請求 {bot.crawler.total_requests} 次 / 訂閱戶 {len(all_subs)} 組)"
+            else f"[正常] (請求 {bot.crawler.total_requests} 次 / 訂閱戶 {len(all_subs)} 組)"
         ),
         inline=True,
     )
@@ -3023,7 +3020,7 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
         for b in boards
     ] or ["無追蹤看板"]
     embed.add_field(
-        name=f"📋 系統精準盯梢看板 ({len(boards)})",
+        name=f"系統精準盯梢看板 ({len(boards)})",
         value="\n".join(board_lines)[:1000],
         inline=False,
     )
@@ -3035,7 +3032,7 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
         for k in keywords
     ] or ["無"]
     embed.add_field(
-        name=f"🎯 當前範圍精確關鍵字 ({len(keywords)})",
+        name=f"當前範圍精確關鍵字 ({len(keywords)})",
         value=" 、 ".join(kw_lines)[:1000],
         inline=False,
     )
@@ -3045,7 +3042,7 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
         for r in fuzzy_rules
     ] or ["無（可使用 `/fuzzy_add` 或私訊 AI 新增）"]
     embed.add_field(
-        name=f"🧠 當前範圍 AI 模糊追蹤規則 ({len(fuzzy_rules)})",
+        name=f"當前範圍 AI 模糊追蹤規則 ({len(fuzzy_rules)})",
         value="\n".join(fz_lines)[:1000],
         inline=False,
     )
@@ -3054,7 +3051,7 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
         bot.next_poll_time.strftime("%H:%M:%S") if bot.next_poll_time else "即將執行"
     )
     embed.add_field(
-        name="📈 系統統計資訊",
+        name="系統統計資訊",
         value=(
             f"• 推播模式：`{'僅推播符合條件文章' if push_mode == 'keyword' else '推播所有新文章'}`\n"
             f"• 輪詢間隔：`{POLL_MIN} ~ {POLL_MAX}` 秒隨機抖動（下次檢查：`{next_t}`）\n"

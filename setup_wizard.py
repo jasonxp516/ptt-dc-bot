@@ -243,7 +243,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
         env_path = os.path.join(base_dir, ".env")
 
     print("\n" + "=" * 70)
-    print("  🚀 歡迎使用 PTT-DC-Bot 首次設定精靈 (Setup Wizard)")
+    print("  [精靈] 歡迎使用 PTT-DC-Bot 首次設定精靈 (Setup Wizard)")
     print("=" * 70)
     print("本精靈將引導您完成 Discord Bot 憑證與相關參數設定。\n")
 
@@ -262,7 +262,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     print("  1. 前往 Discord 開發者入口: https://discord.com/developers/applications")
     print("  2. 建立或選擇您的 Application，點選左側「Bot」分頁")
     print("  3. 點選「Reset Token」獲取金鑰並複製")
-    print("  4. ⚠️ 請務必在同一頁面下方的「Privileged Gateway Intents」中勾選：")
+    print("  4. [注意] 請務必在同一頁面下方的「Privileged Gateway Intents」中勾選：")
     print("     - MESSAGE CONTENT INTENT (必須開啟才能正常運作)\n")
 
     discord_token = ""
@@ -277,7 +277,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
             return False
 
         if not user_input:
-            print("❌ 輸入不能為空，請重新輸入。\n")
+            print("[錯誤] 輸入不能為空，請重新輸入。\n")
             continue
         if user_input.lower() in ("q", "quit", "exit"):
             print("[精靈已取消] 設定未完成。")
@@ -285,25 +285,25 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
 
         cleaned_input = re.sub(r"^[Bb][Oo][Tt](\s+|$)", "", user_input).strip()
         if not cleaned_input:
-            print("❌ 輸入不能為空，請重新輸入。\n")
+            print("[錯誤] 輸入不能為空，請重新輸入。\n")
             continue
 
-        print("🔍 正在向 Discord API 驗證 Token...")
+        print("[驗證] 正在向 Discord API 驗證 Token...")
         valid, b_id, b_user, err = validate_discord_token(cleaned_input)
         if valid:
             discord_token = cleaned_input
             bot_id = b_id or ""
             bot_username = b_user or "Discord Bot"
-            print(f"✅ Token 驗證成功！機器人名稱: {bot_username} (ID: {bot_id})")
+            print(f"[成功] Token 驗證成功！機器人名稱: {bot_username} (ID: {bot_id})")
             oauth2_url = generate_oauth2_url(bot_id)
             print("-" * 70)
-            print("🔗 您的專屬機器人邀請連結 (已具備完整權限):")
+            print("[連結] 您的專屬機器人邀請連結 (已具備完整權限):")
             print(f"   {oauth2_url}")
-            print("💡 請在瀏覽器中開啟上方網址，將機器人邀請至您的 Discord 伺服器！")
+            print("[提示] 請在瀏覽器中開啟上方網址，將機器人邀請至您的 Discord 伺服器！")
             print("-" * 70 + "\n")
             break
         else:
-            print(f"❌ 驗證失敗: {err}")
+            print(f"[錯誤] 驗證失敗: {err}")
             print("請檢查 Token 是否複製完整，或確認網路連線正常。\n")
 
     # -------------------------------------------------------------
@@ -312,7 +312,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     print("【步驟 2/4】配置 Groq Cloud API Key (選填)")
     print("  Groq 提供超高速 AI 推論服務，用於自然語言追蹤與文章智慧審核。")
     print("  若您尚未申請，可前往免費獲取: https://console.groq.com/keys")
-    print("  👉 若暫時不使用 AI 功能，可直接按 [Enter] 略過此步驟。\n")
+    print("  [提示] 若暫時不使用 AI 功能，可直接按 [Enter] 略過此步驟。\n")
 
     groq_api_key = ""
 
@@ -326,18 +326,18 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
             return False
 
         if not user_input:
-            print("ℹ️ 已略過 Groq API Key 設定（後續仍可隨時在 .env 中補充）。\n")
+            print("[資訊] 已略過 Groq API Key 設定（後續仍可隨時在 .env 中補充）。\n")
             groq_api_key = ""
             break
 
-        print("🔍 正在向 Groq API 驗證 API Key...")
+        print("[驗證] 正在向 Groq API 驗證 API Key...")
         valid, err = validate_groq_api_key(user_input)
         if valid:
             groq_api_key = user_input
-            print("✅ Groq API Key 驗證成功！\n")
+            print("[成功] Groq API Key 驗證成功！\n")
             break
         else:
-            print(f"❌ 驗證失敗: {err}")
+            print(f"[錯誤] 驗證失敗: {err}")
             print("請確認金鑰是否正確，或直接按 [Enter] 略過此步驟。\n")
 
     # -------------------------------------------------------------
@@ -345,7 +345,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     # -------------------------------------------------------------
     print("【步驟 3/4】設定預設監控看板")
     print("  常見看板推薦: HardwareSale (電蝦), MacShop, nb-shopping, Gamesale, MobileComm")
-    print(f"  👉 直接按 [Enter] 將採用預設值: {DEFAULT_BOARD_NAME}\n")
+    print(f"  [提示] 直接按 [Enter] 將採用預設值: {DEFAULT_BOARD_NAME}\n")
 
     default_board = DEFAULT_BOARD_NAME
 
@@ -360,15 +360,15 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
 
         if not user_input:
             default_board = DEFAULT_BOARD_NAME
-            print(f"✅ 使用預設看板: {default_board}\n")
+            print(f"[成功] 使用預設看板: {default_board}\n")
             break
 
         if is_valid_board_name(user_input):
             default_board = user_input
-            print(f"✅ 設定看板: {default_board}\n")
+            print(f"[成功] 設定看板: {default_board}\n")
             break
         else:
-            print("❌ 看板名稱格式不正確（僅限英數字、底線與連字號），請重新輸入。\n")
+            print("[錯誤] 看板名稱格式不正確（僅限英數字、底線與連字號），請重新輸入。\n")
 
     # -------------------------------------------------------------
     # Step 4: Bot Display Language
@@ -376,7 +376,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
     print("【步驟 4/4】設定機器人顯示語言 (Display Language)")
     print("  1. 繁體中文 (zh_TW) [預設]")
     print("  2. English (en)")
-    print(f"  👉 直接按 [Enter] 將採用預設值: 1. 繁體中文 ({DEFAULT_LANGUAGE})\n")
+    print(f"  [提示] 直接按 [Enter] 將採用預設值: 1. 繁體中文 ({DEFAULT_LANGUAGE})\n")
 
     bot_language = DEFAULT_LANGUAGE
 
@@ -393,7 +393,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
 
         if not user_input:
             bot_language = DEFAULT_LANGUAGE
-            print(f"✅ 使用預設語言: 繁體中文 ({bot_language})\n")
+            print(f"[成功] 使用預設語言: 繁體中文 ({bot_language})\n")
             break
 
         if user_input.lower() in ("q", "quit", "exit"):
@@ -404,17 +404,17 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
         if normalized:
             bot_language = normalized
             lang_label = "繁體中文 (zh_TW)" if bot_language == "zh_TW" else "English (en)"
-            print(f"✅ 設定語言: {lang_label}\n")
+            print(f"[成功] 設定語言: {lang_label}\n")
             break
         else:
             bot_language = DEFAULT_LANGUAGE
-            print(f"⚠️ 輸入無效，採用預設語言: 繁體中文 ({bot_language})\n")
+            print(f"[警告] 輸入無效，採用預設語言: 繁體中文 ({bot_language})\n")
             break
 
     # -------------------------------------------------------------
     # Final: Save to .env
     # -------------------------------------------------------------
-    print("💾 正在儲存設定至 .env 檔案...")
+    print("[儲存] 正在儲存設定至 .env 檔案...")
     success = write_env_file(
         env_path=env_path,
         discord_token=discord_token,
@@ -425,9 +425,9 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
 
     if success:
         print("=" * 70)
-        print("🎉 設定完成！.env 檔案已成功建立。")
+        print("[完成] 設定完成！.env 檔案已成功建立。")
         if os.name != "nt":
-            print("🔒 已套用安全檔案權限 (0600)。")
+            print("[安全] 已套用安全檔案權限 (0600)。")
         print("=" * 70)
         print("\n後續啟動方式：")
         print("  - 命令列啟動: python3 bot.py")
@@ -436,7 +436,7 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
         print("  - 入群後在頻道輸入 /setup 開啟視覺化設定面板！\n")
         return True
     else:
-        print("❌ 儲存 .env 失敗，請確認磁碟寫入權限。\n")
+        print("[錯誤] 儲存 .env 失敗，請確認磁碟寫入權限。\n")
         return False
 
 

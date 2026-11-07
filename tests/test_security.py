@@ -620,7 +620,7 @@ class TestSecurityAuditSuite(unittest.TestCase):
             return True
 
         # Generic masked error response expected for users
-        generic_error_response = "❌ 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。"
+        generic_error_response = "[錯誤] 處理時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。"
         self.assertTrue(is_safe_message(generic_error_response))
 
         # Simulated raw exceptions that must NOT be exposed
@@ -682,7 +682,7 @@ class TestSecurityAuditSuite(unittest.TestCase):
                     self.assertNotIn("database is locked", msg1)
                     self.assertEqual(
                         msg1,
-                        "❌ 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
+                        "[錯誤] 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
                     )
 
                     # 2. Trigger with RuntimeError containing host user path and secret API key
@@ -706,7 +706,7 @@ class TestSecurityAuditSuite(unittest.TestCase):
                     self.assertNotIn("RuntimeError", msg2)
                     self.assertEqual(
                         msg2,
-                        "❌ 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
+                        "[錯誤] 指令執行時發生系統錯誤，已記錄於內部日誌。若持續發生請洽管理員。",
                     )
                 finally:
                     if "bot" in sys.modules:

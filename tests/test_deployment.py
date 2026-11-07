@@ -933,8 +933,8 @@ class TestDiscordSetupUI(BaseDeploymentTestCase):
         self.assertIsInstance(embed, discord.Embed)
         self.assertIn("3060Ti", embed.title or "")
         field_dict = {f.name: f.value for f in embed.fields}
-        self.assertIn("💰 欲售價格", field_dict)
-        self.assertIn("6,500", field_dict["💰 欲售價格"])
+        self.assertIn("欲售價格", field_dict)
+        self.assertIn("6,500", field_dict["欲售價格"])
 
     def test_test_push_contract_without_bound_channel(self):
         """F17 (Edge Case): Test push fails gracefully with warning when no channel is bound."""
@@ -967,11 +967,11 @@ class TestDiscordSetupUI(BaseDeploymentTestCase):
             view_zh = SetupPanelView(subscriber=sub)
 
             self.assertIn("PTT-DC-Bot 視覺化互動設定面板", embed_zh.title)
-            self.assertIn("🌐 語言: 繁體中文 (zh_TW)", embed_zh.footer.text)
+            self.assertIn("語言: 繁體中文 (zh_TW)", embed_zh.footer.text)
             zh_labels = [b.label for b in view_zh.children if hasattr(b, "label") and b.label]
-            self.assertIn("📌 綁定此頻道為推播頻道", zh_labels)
-            self.assertIn("➕ 新增追蹤關鍵字", zh_labels)
-            self.assertIn("🔔 測試推播通知", zh_labels)
+            self.assertIn("綁定此頻道為推播頻道", zh_labels)
+            self.assertIn("新增追蹤關鍵字", zh_labels)
+            self.assertIn("測試推播通知", zh_labels)
 
             # 2. Test English (en)
             config.BOT_LANGUAGE = "en"
@@ -979,12 +979,12 @@ class TestDiscordSetupUI(BaseDeploymentTestCase):
             view_en = SetupPanelView(subscriber=sub)
 
             self.assertIn("PTT Tracking Dispatch Control Center", embed_en.title)
-            self.assertIn("🌐 Language: English (en)", embed_en.footer.text)
-            self.assertIn("📍 Current Alert Target", [f.name for f in embed_en.fields])
+            self.assertIn("Language: English (en)", embed_en.footer.text)
+            self.assertIn("Current Alert Target", [f.name for f in embed_en.fields])
             en_labels = [b.label for b in view_en.children if hasattr(b, "label") and b.label]
-            self.assertIn("📌 Bind Channel", en_labels)
-            self.assertIn("➕ Add Keyword", en_labels)
-            self.assertIn("🔔 Test Alert", en_labels)
+            self.assertIn("Bind Channel", en_labels)
+            self.assertIn("Add Keyword", en_labels)
+            self.assertIn("Test Alert", en_labels)
         finally:
             config.BOT_LANGUAGE = original_lang
             storage.close()

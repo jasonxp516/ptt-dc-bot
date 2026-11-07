@@ -86,10 +86,12 @@ Ideal for users who prefer graphical double-click launchers without running term
 1. Visit the project's [GitHub Releases page](https://github.com/jasonxp516/ptt-dc-bot/releases) and download the pre-packaged archive for your platform:
    - **Windows**: Download `ptt-dc-bot-<version>-windows.zip`
    - **macOS**: Download `ptt-dc-bot-<version>-macos.tar.gz`
-2. Extract the archive into any folder on your computer (e.g., Desktop or personal documents).
+   - **Linux**: Download `ptt-dc-bot-<version>-linux.tar.gz` (e.g., `ptt-dc-bot-v1.0.0-beta.1-linux.tar.gz`)
+2. Extract the archive into any folder on your computer (e.g., Desktop or personal documents; on Linux run `tar -xzf ptt-dc-bot-*-linux.tar.gz`).
 3. Run the launcher:
    - **On Windows**: Double-click **`start_windows.bat`**
    - **On macOS**: Double-click **`start_mac.command`**
+   - **On Linux**: In the extracted directory, run **`./install.sh`** for initial setup (or run `./start_bg.sh` for daemon mode / `python3 bot.py` for foreground execution)
 4. On first launch, the environment will initialize automatically and launch the configuration wizard. Paste your credentials when prompted, and the bot will start immediately.
 
 *Watchdog Recovery*:
@@ -195,7 +197,7 @@ Once your bot is online, channel configuration, board subscriptions, and keyword
   - `Embed Links` (required for notification cards)
   - `Read Message History`
 
-> **⚠️ Critical Note**: Make sure to visit the [Discord Developer Portal](https://discord.com/developers/applications) → Your Bot → **Bot** tab → **Privileged Gateway Intents**, enable **Message Content Intent**, and save changes. Without this intent, the bot cannot process conversational commands or direct messages.
+> **[Critical Note]**: Make sure to visit the [Discord Developer Portal](https://discord.com/developers/applications) → Your Bot → **Bot** tab → **Privileged Gateway Intents**, enable **Message Content Intent**, and save changes. Without this intent, the bot cannot process conversational commands or direct messages.
 
 ---
 
@@ -223,23 +225,23 @@ Type `/setup` in any server text channel (or inside a private DM with the bot) t
 
 Four-step walkthrough:
 
-1. **Step 1: Click "📌 Bind Channel"**  
+1. **Step 1: Click "Bind Channel"**  
    - Binds the current text channel as the notification target for the server with one click.
    - If clicked inside a private DM with the bot, sets the destination to your personal DM.
-2. **Step 2: Select Boards in "📋 Select Boards to Monitor" Dropdown**  
+2. **Step 2: Select Boards in "Select Boards to Monitor" Dropdown**  
    - The dropdown menu is pre-populated with top trading boards:
-     - `HardwareSale`: PC hardware (GPUs, CPUs, RAM, power supplies, peripherals) 🖥️
-     - `MacShop`: Apple marketplace (MacBooks, iPhones, iPads, Apple accessories) 🍎
-     - `nb-shopping`: Laptops & notebooks (Gaming laptops, ultrabooks) 💻
-     - `Gamesale`: Video games (Consoles, PS5/Switch game cartridges) 🎮
-     - `MobileComm`: Mobile communications (Smartphones, cellular hardware) 📱
+     - `HardwareSale`: PC hardware (GPUs, CPUs, RAM, power supplies, peripherals)
+     - `MacShop`: Apple marketplace (MacBooks, iPhones, iPads, Apple accessories)
+     - `nb-shopping`: Laptops & notebooks (Gaming laptops, ultrabooks)
+     - `Gamesale`: Video games (Consoles, PS5/Switch game cartridges)
+     - `MobileComm`: Mobile communications (Smartphones, cellular hardware)
    - Supports single or multiple selections. Selecting boards establishes initial baselines immediately without spamming historical posts.
 
 <p align="center">
   <img src="assets/dropdown_boards_select_en.svg" alt="Popular Boards Multi-Select Dropdown" width="680"/>
 </p>
 
-3. **Step 3: Click "➕ Add Keyword" (Modal Form)**  
+3. **Step 3: Click "Add Keyword" (Modal Form)**  
    - Opens a pop-up modal dialog with 4 structured fields:
      - **Tracking Keyword (Required)**: Supports space AND logic (e.g., `3060Ti Taipei`) and minus exclusion (e.g., `3060 -laptop -mining`).
      - **Target Board (Optional)**: Defaults to `HardwareSale`.
@@ -250,7 +252,7 @@ Four-step walkthrough:
   <img src="assets/keyword_modal_form_en.svg" alt="Add Keyword Modal Dialog" width="560"/>
 </p>
 
-4. **Step 4: Click "🔔 Test Alert"**  
+4. **Step 4: Click "Test Alert"**  
    - Dispatches a fully formatted test notification embed to the bound channel/DM immediately.
    - Confirms that the bot possesses send and embed permissions and verifies card rendering.
 
@@ -295,7 +297,7 @@ Don't want to wait for new posts? Run `/scan_unsold keyword: 3060TI`. The engine
 Full command references, background daemon services, environment variables, and system internals are organized below:
 
 <details>
-<summary><b>1. Complete 24 Slash Commands Reference</b></summary>
+<summary><b>1. Complete 25 Slash Commands Reference</b></summary>
 <br>
 
 #### Visual Setup & AI Search
@@ -329,7 +331,8 @@ Full command references, background daemon services, environment variables, and 
 | Command | Parameters | Description |
 | :--- | :--- | :--- |
 | `/channel_set` | `channel`, `scope` | Binds notification target (running in DMs without arguments binds DM delivery) |
-| `/pause` / `/resume` | `scope` | Pauses or resumes push alerts while preserving all configured rules |
+| `/pause` | `scope` | Pauses push alerts while preserving all configured rules |
+| `/resume` | `scope` | Resumes push alerts for the specified scope |
 | `/me` | None | Displays your personal rules, DM connection status, and remaining daily quotas |
 | `/forget_me` | None | Permanently erases your personal data, rules, delivery history, and conversation memory |
 | `/status` | `scope` | Displays bot uptime, Groq queue health, and crawler performance metrics |
@@ -409,7 +412,7 @@ bash restart_bg.sh
 
 ```text
 ptt-dc-bot/
-├── bot.py               # Discord Client, 24 Slash commands, /setup UI View, polling engine
+├── bot.py               # Discord Client, 25 Slash commands, /setup UI View, polling engine
 ├── setup_wizard.py      # Standalone interactive CLI configuration wizard (standard library only)
 ├── install.sh           # Linux / macOS one-liner installation script
 ├── install.ps1          # Windows PowerShell one-liner installer

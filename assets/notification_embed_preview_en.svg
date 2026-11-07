@@ -41,43 +41,43 @@
   <text x="82" y="93" class="text-title">[Sell/Taipei/All] ASUS Dual RTX 3060 Ti 8G (Under Warranty)</text>
 
   <!-- Field 1: Matched Keyword -->
-  <text x="82" y="117" class="text-label">🎯 Matched Keyword</text>
+  <text x="82" y="117" class="text-label">Matched Keyword</text>
   <rect x="82" y="123" width="70" height="20" rx="3" fill="#1E1F22" />
   <text x="117" y="137" class="text-code" text-anchor="middle">3060Ti</text>
 
-  <!-- Row 1: 👤 Author / 🏷️ Category / 📅 Date / Push Count -->
-  <text x="82" y="165" class="text-label">👤 Author</text>
+  <!-- Row 1: Author / Category / Date / Push Count -->
+  <text x="82" y="165" class="text-label">Author</text>
   <rect x="82" y="171" width="80" height="20" rx="3" fill="#1E1F22" />
   <text x="122" y="185" class="text-code-author" text-anchor="middle">seller123</text>
 
-  <text x="220" y="165" class="text-label">🏷️ Category</text>
+  <text x="220" y="165" class="text-label">Category</text>
   <rect x="220" y="171" width="46" height="20" rx="3" fill="#1E1F22" />
   <text x="243" y="185" class="text-code" text-anchor="middle">Sell</text>
 
-  <text x="340" y="165" class="text-label">📅 Date / Push Count</text>
+  <text x="340" y="165" class="text-label">Date / Push Count</text>
   <text x="340" y="186" class="text-val"><tspan font-family="Consolas, monospace" fill="#F2F3F5">11/06</tspan> (Pushes: <tspan font-family="Consolas, monospace" fill="#F2F3F5">0</tspan>)</text>
 
-  <!-- Row 2: 💰 Price / 📍 Trade Method / Location / 👥 Buyer Activity -->
-  <text x="82" y="217" class="text-label">💰 Price</text>
+  <!-- Row 2: Price / Trade Method / Location / Buyer Activity -->
+  <text x="82" y="217" class="text-label">Price</text>
   <text x="82" y="238" class="text-price">NT$ 6,500</text>
 
-  <text x="220" y="217" class="text-label">📍 Trade Method / Location</text>
+  <text x="220" y="217" class="text-label">Trade Method / Location</text>
   <rect x="220" y="223" width="168" height="20" rx="3" fill="#1E1F22" />
   <text x="228" y="237" class="text-code-author">7-11 / Taipei In-person</text>
 
-  <text x="420" y="217" class="text-label">👥 Buyer Activity</text>
-  <text x="420" y="237" class="text-val">✨ No queue / comments yet</text>
+  <text x="420" y="217" class="text-label">Buyer Activity</text>
+  <text x="420" y="237" class="text-val">No queue / comments yet</text>
 
   <!-- Field 8: AI Condition / Semantic Summary -->
-  <text x="82" y="271" class="text-label">🤖 AI Condition / Semantic Summary</text>
+  <text x="82" y="271" class="text-label">AI Condition / Semantic Summary</text>
   <rect x="82" y="278" width="552" height="32" rx="3" fill="#1E1F22" />
   <text x="94" y="291" class="text-code-author">Original box included, warranty until 2026/08, non-mining,</text>
   <text x="94" y="304" class="text-code-author">fully functional, personal upgrade replacement</text>
 
   <!-- Footer -->
-  <text x="82" y="362" class="text-submuted">Posted: 2026-11-06 23:22:15 | 🏠 Server-wide | AI: llama-3.3-70b-versatile • Today at 11:22 PM</text>
+  <text x="82" y="362" class="text-submuted">Posted: 2026-11-06 23:22:15 | [Server Tracking] | AI: llama-3.3-70b-versatile • Today at 11:22 PM</text>
 
   <!-- Attached Button (Link to PTT) -->
   <rect x="66" y="394" width="340" height="38" rx="4" fill="#4E5058" />
-  <text x="236" y="418" class="text-btn">🔗 View Original Post on PTT HardwareSale</text>
+  <text x="236" y="418" class="text-btn">View Original Post on PTT HardwareSale</text>
 </svg>

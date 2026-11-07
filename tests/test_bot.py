@@ -368,7 +368,7 @@ class TestPTTBotUpgrades(unittest.TestCase):
         self.assertIn(
             "• **商品**：RTX 3060Ti ｜ **價格**：6000元 ｜ **狀態**：販售中", formatted
         )
-        self.assertIn("**🔹 掃描結果**", formatted)
+        self.assertIn("**掃描結果**", formatted)
         self.assertNotIn("<br>", formatted)
 
         # Test embed 6000-char limit guard
