@@ -1,11 +1,64 @@
 import os
 import re
-from typing import Dict
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+
+def _parse_bool(val: Any, default: bool = False) -> bool:
+    """安全解析布林值，支援 1/0, true/false, yes/no, on/off"""
+    if val is None:
+        return default
+    cleaned = str(val).strip().lower()
+    if cleaned in ("true", "1", "yes", "y", "on", "enable", "enabled", "t"):
+        return True
+    if cleaned in ("false", "0", "no", "n", "off", "disable", "disabled", "f"):
+        return False
+    return default
+
+
+def _parse_int(val: Any, default: int) -> int:
+    """安全解析整數，遇到非法字元時安全回退至預設值"""
+    try:
+        return int(str(val).strip())
+    except (ValueError, TypeError):
+        return default
+
+
+# ---------------------------------------------------------------------
+# 多平台啟用開關 (Multi-Platform Activation Flags - Milestone 3)
+# ---------------------------------------------------------------------
+ENABLE_DISCORD = _parse_bool(
+    os.getenv("ENABLE_DISCORD", os.getenv("DISCORD_ENABLED", "true")), default=True
+)
+ENABLE_TELEGRAM = _parse_bool(
+    os.getenv("ENABLE_TELEGRAM", os.getenv("TELEGRAM_ENABLED", "false")), default=False
+)
+ENABLE_EMAIL = _parse_bool(
+    os.getenv("ENABLE_EMAIL", os.getenv("EMAIL_ENABLED", "false")), default=False
+)
+
+# ---------------------------------------------------------------------
+# Telegram 平台組態 (Telegram Bot Configuration)
+# ---------------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_ADMIN_USER_ID = os.getenv("TELEGRAM_ADMIN_USER_ID", "").strip()
+
+# ---------------------------------------------------------------------
+# Email SMTP 平台組態 (Email SMTP Configuration)
+# ---------------------------------------------------------------------
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+SMTP_PORT = _parse_int(os.getenv("SMTP_PORT", "587"), 587)
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_USE_TLS = _parse_bool(os.getenv("SMTP_USE_TLS", "true"), default=True)
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip() or SMTP_USER
+EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "PTT 智慧追蹤機器人").strip()
+EMAIL_TO = os.getenv("EMAIL_TO", os.getenv("EMAIL_TARGET_RECIPIENT", "")).strip()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 DEFAULT_CHANNEL_ID = os.getenv("DEFAULT_CHANNEL_ID", "").strip()
@@ -26,8 +79,8 @@ def _parse_language(raw: str) -> str:
 
 BOT_LANGUAGE = _parse_language(os.getenv("BOT_LANGUAGE", DEFAULT_LANGUAGE))
 
-POLL_MIN = int(os.getenv("POLL_INTERVAL_MIN", "90"))
-POLL_MAX = int(os.getenv("POLL_INTERVAL_MAX", "150"))
+POLL_MIN = _parse_int(os.getenv("POLL_INTERVAL_MIN", "90"), 90)
+POLL_MAX = _parse_int(os.getenv("POLL_INTERVAL_MAX", "150"), 150)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()

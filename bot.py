@@ -30,6 +30,9 @@ from config import (
     DEFAULT_CHANNEL_ID,
     DEFAULT_GUILD_ID,
     DISCORD_TOKEN,
+    ENABLE_DISCORD,
+    ENABLE_EMAIL,
+    ENABLE_TELEGRAM,
     GROQ_API_KEY,
     GROQ_FAST_MODEL,
     GROQ_MODEL,
@@ -38,6 +41,7 @@ from config import (
     OWNER_USER_ID,
     POLL_MAX,
     POLL_MIN,
+    TELEGRAM_BOT_TOKEN,
 )
 from delivery import DeliveryManager
 from embeds import (
@@ -200,6 +204,8 @@ class PTTDiscordBot(discord.Client):
         self.scheduler = scheduler
         self.agent = agent
         self.delivery = DeliveryManager(bot=self, storage=storage, crawler=crawler)
+        self.tg_bot: Optional[Any] = None
+        self._tg_task: Optional[asyncio.Task] = None
         self._poll_task: Optional[asyncio.Task] = None
         self._poll_lock = asyncio.Lock()
         self.next_poll_time: Optional[datetime] = None
@@ -216,9 +222,36 @@ class PTTDiscordBot(discord.Client):
             logger.debug(f"無法註冊持久性 SetupPanelView: {e}")
         self._poll_task = asyncio.create_task(self._polling_loop())
 
+        # 若 Telegram 已啟用且配置 Token，啟動 Telegram 機器人長輪詢背景任務
+        if getattr(config, "ENABLE_TELEGRAM", False) and getattr(config, "TELEGRAM_BOT_TOKEN", ""):
+            try:
+                from telegram_bot import TelegramBot
+
+                self.tg_bot = TelegramBot(
+                    token=config.TELEGRAM_BOT_TOKEN,
+                    storage=self.storage,
+                    crawler=self.crawler,
+                    delivery=self.delivery,
+                )
+                self._tg_task = asyncio.create_task(self.tg_bot.start_polling())
+                logger.info("[資訊] Telegram 機器人長輪詢 (Long Polling) 背景任務已啟動")
+            except Exception as e:
+                logger.error(f"[錯誤] 啟動 Telegram 機器人長輪詢失敗: {e}", exc_info=True)
+
     async def close(self) -> None:
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
+        if self.tg_bot is not None:
+            try:
+                await self.tg_bot.stop()
+            except Exception as e:
+                logger.debug(f"[警告] 停止 TelegramBot 失敗: {e}")
+        if self._tg_task and not self._tg_task.done():
+            self._tg_task.cancel()
+        try:
+            await self.delivery.close()
+        except Exception as e:
+            logger.debug(f"[警告] 關閉 delivery 失敗: {e}")
         await self.agent.close()
         await self.crawler.close()
         self.storage.close()

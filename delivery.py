@@ -325,11 +325,22 @@ class DeliveryDispatcher:
             logger.debug(f"售出狀態更新分發略過 (平台={platform}): {e}")
             return False
 
+    async def close(self) -> None:
+        """優雅關閉所有已註冊供應商持有的非同步資源 (如 aiohttp session)"""
+        for platform_name, provider in list(self._providers.items()):
+            if hasattr(provider, "close") and callable(provider.close):
+                try:
+                    res = provider.close()
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception as e:
+                    logger.debug(f"[警告] 關閉推播供應商 ({platform_name}) 失敗: {e}")
+
 
 class DeliveryManager:
     """
-    Rate-limited, multi-subscriber notification manager supporting both Guild Channels
-    and Personal Direct Messages (DMs), with 3-day repost deduplication and sold-out follow-up editing.
+    Rate-limited, multi-subscriber notification manager supporting Discord, Telegram, and Email,
+    with 3-day repost deduplication and sold-out follow-up editing.
 
     Now powered by DeliveryDispatcher and BaseNotificationProvider for extensible multi-platform routing.
     """
@@ -340,6 +351,9 @@ class DeliveryManager:
         storage: Optional[BotStorage] = None,
         crawler: Optional[PTTCrawler] = None,
         dispatcher: Optional[DeliveryDispatcher] = None,
+        auto_register_providers: bool = True,
+        telegram_provider: Optional[BaseNotificationProvider] = None,
+        email_provider: Optional[BaseNotificationProvider] = None,
     ):
         self.bot = bot
         self.storage = storage
@@ -350,18 +364,103 @@ class DeliveryManager:
         else:
             self.dispatcher = DeliveryDispatcher(storage=self.storage)
 
-        if self.bot is not None and self.storage is not None:
-            self.discord_provider = DiscordNotificationProvider(
-                bot=self.bot,
-                storage=self.storage,
-            )
-            self.dispatcher.register_provider("discord", self.discord_provider)
+        self.discord_provider: Optional[DiscordNotificationProvider] = None
+        self.telegram_provider: Optional[BaseNotificationProvider] = telegram_provider
+        self.email_provider: Optional[BaseNotificationProvider] = email_provider
+
+        if auto_register_providers:
+            self._auto_register_providers()
+
+    def _auto_register_providers(self) -> None:
+        """
+        根據 config.py 開關與憑證自動載入與註冊多平台 Provider。
+        若外部模組尚未安裝或未啟用，則優雅降級略過。
+        """
+        import config
+
+        # 1. Discord Provider
+        if self.discord_provider is None and self.bot is not None and self.storage is not None:
+            enable_discord = getattr(config, "ENABLE_DISCORD", True)
+            if enable_discord:
+                self.discord_provider = DiscordNotificationProvider(
+                    bot=self.bot,
+                    storage=self.storage,
+                )
+                self.dispatcher.register_provider("discord", self.discord_provider)
+
+        # 2. Telegram Provider
+        if self.telegram_provider is not None:
+            self.dispatcher.register_provider("telegram", self.telegram_provider)
         else:
-            self.discord_provider = None
+            enable_tg = getattr(config, "ENABLE_TELEGRAM", False)
+            tg_token = getattr(config, "TELEGRAM_BOT_TOKEN", "").strip()
+            if enable_tg and tg_token:
+                try:
+                    from telegram_bot import TelegramNotificationProvider
+
+                    self.telegram_provider = TelegramNotificationProvider(
+                        token=tg_token,
+                        storage=self.storage,
+                    )
+                    self.dispatcher.register_provider("telegram", self.telegram_provider)
+                    logger.info("[資訊] 已自動掛載 TelegramNotificationProvider")
+                except ImportError as e:
+                    logger.warning(f"[警告] 無法載入 telegram_bot 模組: {e}")
+                except Exception as e:
+                    logger.error(
+                        f"[錯誤] 自動註冊 TelegramNotificationProvider 失敗: {e}",
+                        exc_info=True,
+                    )
+
+        # 3. Email Provider
+        if self.email_provider is not None:
+            self.dispatcher.register_provider("email", self.email_provider)
+        else:
+            enable_em = getattr(config, "ENABLE_EMAIL", False)
+            smtp_host = getattr(config, "SMTP_HOST", "").strip()
+            if enable_em and smtp_host:
+                try:
+                    from email_notifier import EmailNotificationProvider
+
+                    self.email_provider = EmailNotificationProvider(
+                        host=smtp_host,
+                        port=getattr(config, "SMTP_PORT", 587),
+                        user=getattr(config, "SMTP_USER", "").strip(),
+                        password=getattr(config, "SMTP_PASSWORD", "").strip(),
+                        use_tls=getattr(config, "SMTP_USE_TLS", True),
+                        from_addr=getattr(config, "EMAIL_FROM", "").strip()
+                        or getattr(config, "SMTP_USER", "").strip(),
+                        from_name=getattr(
+                            config, "EMAIL_FROM_NAME", "PTT 智慧追蹤機器人"
+                        ).strip(),
+                        default_to=getattr(config, "EMAIL_TO", "").strip(),
+                        storage=self.storage,
+                    )
+                    self.dispatcher.register_provider("email", self.email_provider)
+                    logger.info("[資訊] 已自動掛載 EmailNotificationProvider")
+                except ImportError as e:
+                    logger.warning(f"[警告] 無法載入 email_notifier 模組: {e}")
+                except Exception as e:
+                    logger.error(
+                        f"[錯誤] 自動註冊 EmailNotificationProvider 失敗: {e}",
+                        exc_info=True,
+                    )
 
     def register_provider(self, platform: str, provider: BaseNotificationProvider) -> None:
-        """捷徑：在底層分發器上註冊其他平台供應商"""
-        self.dispatcher.register_provider(platform, provider)
+        """手動註冊或覆寫平台供應商"""
+        plat = platform.lower().strip()
+        if plat == "discord" and isinstance(provider, DiscordNotificationProvider):
+            self.discord_provider = provider
+        elif plat == "telegram":
+            self.telegram_provider = provider
+        elif plat == "email":
+            self.email_provider = provider
+        self.dispatcher.register_provider(plat, provider)
+
+    async def close(self) -> None:
+        """關閉分發器與所有已註冊的供應商資源"""
+        if self.dispatcher:
+            await self.dispatcher.close()
 
     async def resolve_subscriber_target(
         self, sub: Dict[str, Any]
