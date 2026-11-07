@@ -1,3 +1,4 @@
+import abc
 import asyncio
 import logging
 import random
@@ -14,18 +15,47 @@ from storage import BotStorage, compute_dedupe_hash
 logger = logging.getLogger("delivery")
 
 
-class DeliveryManager:
+class BaseNotificationProvider(abc.ABC):
     """
-    Rate-limited, multi-subscriber notification dispatcher supporting both Guild Channels
-    and Personal Direct Messages (DMs), with 3-day repost deduplication and sold-out follow-up editing.
+    多平台通知供應商抽象基底類別。
+    所有支援的通訊與推播平台 (Discord, Telegram, Email) 均需實作此介面。
     """
 
-    def __init__(self, bot: discord.Client, storage: BotStorage, crawler: PTTCrawler):
+    platform_name: str = "base"
+
+    @abc.abstractmethod
+    async def deliver(
+        self,
+        subscriber: Dict[str, Any],
+        items: List[Dict[str, Any]],
+    ) -> int:
+        """將已過濾之命中文章推播至指定訂閱者。回傳成功發送數。"""
+        pass
+
+    @abc.abstractmethod
+    async def update_sold(
+        self,
+        subscriber: Dict[str, Any],
+        delivery_record: Dict[str, Any],
+        detail: Dict[str, Any],
+    ) -> bool:
+        """當文章於 PTT 被標記為已售出/預定時更新訊息。回傳是否更新成功。"""
+        pass
+
+
+class DiscordNotificationProvider(BaseNotificationProvider):
+    """
+    Discord 原生通知供應商：
+    負責 Discord 頻道與私訊解析、Embed 卡片渲染、按鈕組件封裝與訊息原處修改。
+    """
+
+    platform_name: str = "discord"
+
+    def __init__(self, bot: discord.Client, storage: BotStorage):
         self.bot = bot
         self.storage = storage
-        self.crawler = crawler
 
-    async def resolve_subscriber_target(
+    async def resolve_target(
         self, sub: Dict[str, Any]
     ) -> Optional[discord.abc.Messageable]:
         sub_id = sub["id"]
@@ -53,7 +83,7 @@ class DeliveryManager:
         if scope == "user":
             if sub.get("dm_failed"):
                 return None
-            uid_str = str(sub.get("discord_id", ""))
+            uid_str = str(sub.get("discord_id") or sub.get("target_id") or "")
             if not uid_str.isdigit():
                 return None
             uid = int(uid_str)
@@ -76,55 +106,26 @@ class DeliveryManager:
 
         return None
 
-    async def deliver_subscriber_matches(
+    async def deliver(
         self,
-        sub: Dict[str, Any],
+        subscriber: Dict[str, Any],
         items: List[Dict[str, Any]],
     ) -> int:
-        """
-        Deliver matched articles to a single subscriber.
-        Each item in `items` has keys:
-          - article: Dict
-          - matched_keywords: List[str]
-          - detail: Optional[Dict]
-          - fuzzy_matches: List[Dict]
-        Returns number of pushed messages.
-        """
-        if not items:
-            return 0
-
-        sub_id = sub["id"]
-        scope = sub.get("scope", "guild")
-        scope_label = (
-            f"[個人追蹤] {sub.get('display_name') or sub.get('discord_id')}"
-            if scope == "user"
-            else f"[伺服器追蹤] {sub.get('display_name') or '共用'}"
-        )
-
-        # Filter out 3-day duplicate reposts for this subscriber
-        filtered_items = []
-        for it in items:
-            art = it["article"]
-            d_hash = compute_dedupe_hash(
-                art.get("board", ""), art.get("author", ""), art.get("title", "")
-            )
-            if self.storage.is_duplicate_delivery(sub_id, art["url"], d_hash):
-                logger.info(
-                    f"[Dedupe] 略過重複上架/已推播文章 (Sub#{sub_id}): {art['title']}"
-                )
-                continue
-            filtered_items.append(it)
-
-        if not filtered_items:
-            return 0
-
-        target = await self.resolve_subscriber_target(sub)
+        target = await self.resolve_target(subscriber)
         if target is None:
             return 0
 
+        sub_id = subscriber["id"]
+        scope = subscriber.get("scope", "guild")
+        scope_label = (
+            f"[個人追蹤] {subscriber.get('display_name') or subscriber.get('discord_id')}"
+            if scope == "user"
+            else f"[伺服器追蹤] {subscriber.get('display_name') or '共用'}"
+        )
+
         pushed = 0
-        primary_slice = filtered_items[:MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER]
-        overflow_slice = filtered_items[MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER:]
+        primary_slice = items[:MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER]
+        overflow_slice = items[MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER:]
 
         for it in primary_slice:
             art = it["article"]
@@ -146,7 +147,7 @@ class DeliveryManager:
                     view=view,
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
-                ch_id = getattr(target, "id", None) or sub.get("push_channel_id")
+                ch_id = getattr(target, "id", None) or subscriber.get("push_channel_id")
                 self.storage.record_delivery(
                     subscriber_id=sub_id,
                     article=art,
@@ -157,7 +158,7 @@ class DeliveryManager:
                 pushed += 1
                 await asyncio.sleep(random.uniform(1.2, 2.0))
             except discord.Forbidden:
-                if scope == "user" and not sub.get("push_channel_id"):
+                if scope == "user" and not subscriber.get("push_channel_id"):
                     logger.warning(f"發送私訊給訂閱者 #{sub_id} 遭拒 (Forbidden)，標記 dm_failed=1")
                     self.storage.mark_subscriber_dm_failed(sub_id, True)
                 else:
@@ -198,18 +199,194 @@ class DeliveryManager:
 
         return pushed
 
+    async def update_sold(
+        self,
+        subscriber: Dict[str, Any],
+        delivery_record: Dict[str, Any],
+        detail: Dict[str, Any],
+    ) -> bool:
+        ch_id = delivery_record.get("channel_id")
+        msg_id = delivery_record.get("message_id")
+        if not ch_id or not msg_id or not str(ch_id).isdigit() or not str(msg_id).isdigit():
+            return False
+
+        try:
+            target = await self.resolve_target(subscriber)
+            if target is None:
+                return False
+            msg = await target.fetch_message(int(msg_id))
+            art_stub = {
+                "url": delivery_record.get("article_url", ""),
+                "board": delivery_record.get("board", "HardwareSale"),
+                "title": delivery_record.get("title", "已售出商品"),
+                "author": delivery_record.get("author", "未知"),
+                "date": "",
+                "category": "賣",
+                "nrec": "-",
+            }
+            sold_embed = build_article_embed(
+                art_stub,
+                matched_keywords=[],
+                detail=detail,
+                is_sold_update=True,
+            )
+            await msg.edit(embed=sold_embed)
+            return True
+        except Exception as e:
+            logger.debug(f"更新 Discord 已售出訊息 ({msg_id}) 略過: {e}")
+            return False
+
+
+class DeliveryDispatcher:
+    """
+    解耦通知分發器：
+    根據訂閱者的 platform 屬性，將文章推播與售出追蹤更新導向至已註冊之 NotificationProvider。
+    統一在分發層執行跨平台的 3 天去重檢驗 (compute_dedupe_hash)。
+    """
+
+    def __init__(self, storage: Optional[BotStorage] = None):
+        self.storage = storage
+        self._providers: Dict[str, BaseNotificationProvider] = {}
+
+    def register_provider(
+        self, platform: str, provider: BaseNotificationProvider
+    ) -> None:
+        key = platform.lower().strip()
+        self._providers[key] = provider
+        logger.info(f"已註冊通知供應商: {key} -> {provider.__class__.__name__}")
+
+    def get_provider(self, platform: str) -> Optional[BaseNotificationProvider]:
+        return self._providers.get(platform.lower().strip())
+
+    def unregister_provider(self, platform: str) -> Optional[BaseNotificationProvider]:
+        return self._providers.pop(platform.lower().strip(), None)
+
+    @property
+    def registered_platforms(self) -> List[str]:
+        return list(self._providers.keys())
+
+    async def dispatch(
+        self,
+        subscriber: Dict[str, Any],
+        items: List[Dict[str, Any]],
+    ) -> int:
+        if not items:
+            return 0
+
+        platform = str(subscriber.get("platform") or "discord").lower().strip()
+        provider = self._providers.get(platform)
+        if not provider:
+            logger.warning(
+                f"無法分發通知：未註冊的推播平台 '{platform}' (訂閱者 #{subscriber.get('id')})"
+            )
+            return 0
+
+        sub_id = subscriber.get("id")
+        filtered_items = []
+        for it in items:
+            art = it.get("article", {})
+            d_hash = compute_dedupe_hash(
+                art.get("board", ""), art.get("author", ""), art.get("title", "")
+            )
+            if (
+                self.storage
+                and sub_id is not None
+                and self.storage.is_duplicate_delivery(sub_id, art.get("url", ""), d_hash)
+            ):
+                logger.info(
+                    f"[Dedupe] 略過重複上架/已推播文章 (Sub#{sub_id}, 平台={platform}): {art.get('title')}"
+                )
+                continue
+            filtered_items.append(it)
+
+        if not filtered_items:
+            return 0
+
+        try:
+            return await provider.deliver(subscriber, filtered_items)
+        except Exception as e:
+            logger.error(f"推播分發失敗 (平台={platform}, Sub#{sub_id}): {e}", exc_info=True)
+            return 0
+
+    async def dispatch_sold_update(
+        self,
+        subscriber: Dict[str, Any],
+        delivery_record: Dict[str, Any],
+        detail: Dict[str, Any],
+    ) -> bool:
+        platform = str(subscriber.get("platform") or "discord").lower().strip()
+        provider = self._providers.get(platform)
+        if not provider:
+            return False
+
+        try:
+            return await provider.update_sold(subscriber, delivery_record, detail)
+        except Exception as e:
+            logger.debug(f"售出狀態更新分發略過 (平台={platform}): {e}")
+            return False
+
+
+class DeliveryManager:
+    """
+    Rate-limited, multi-subscriber notification manager supporting both Guild Channels
+    and Personal Direct Messages (DMs), with 3-day repost deduplication and sold-out follow-up editing.
+
+    Now powered by DeliveryDispatcher and BaseNotificationProvider for extensible multi-platform routing.
+    """
+
+    def __init__(
+        self,
+        bot: Optional[discord.Client] = None,
+        storage: Optional[BotStorage] = None,
+        crawler: Optional[PTTCrawler] = None,
+        dispatcher: Optional[DeliveryDispatcher] = None,
+    ):
+        self.bot = bot
+        self.storage = storage
+        self.crawler = crawler
+
+        if dispatcher is not None:
+            self.dispatcher = dispatcher
+        else:
+            self.dispatcher = DeliveryDispatcher(storage=self.storage)
+
+        if self.bot is not None and self.storage is not None:
+            self.discord_provider = DiscordNotificationProvider(
+                bot=self.bot,
+                storage=self.storage,
+            )
+            self.dispatcher.register_provider("discord", self.discord_provider)
+        else:
+            self.discord_provider = None
+
+    def register_provider(self, platform: str, provider: BaseNotificationProvider) -> None:
+        """捷徑：在底層分發器上註冊其他平台供應商"""
+        self.dispatcher.register_provider(platform, provider)
+
+    async def resolve_subscriber_target(
+        self, sub: Dict[str, Any]
+    ) -> Optional[discord.abc.Messageable]:
+        if self.discord_provider is not None:
+            return await self.discord_provider.resolve_target(sub)
+        return None
+
+    async def deliver_subscriber_matches(
+        self,
+        sub: Dict[str, Any],
+        items: List[Dict[str, Any]],
+    ) -> int:
+        return await self.dispatcher.dispatch(sub, items)
+
     async def check_sold_deliveries_once(self, max_checks: int = 2) -> int:
-        """
-        D1 Follow-up Sold Update:
-        Periodically re-checks a couple of recently delivered articles (<18h old) using the rule engine
-        (zero AI token cost). If an item is now marked sold/reserved on PTT, edits the original Discord message
-        with a strikethrough '[已售出]' badge!
-        """
-        recent = self.storage.get_recent_unmarked_deliveries(max_age_hours=18, limit=max_checks * 2)
+        if not self.storage or not self.crawler:
+            return 0
+
+        recent = self.storage.get_recent_unmarked_deliveries(
+            max_age_hours=18, limit=max_checks * 2
+        )
         if not recent:
             return 0
 
-        # Group by article_url so we only fetch each PTT URL once
         by_url: Dict[str, List[Dict]] = {}
         for row in recent:
             by_url.setdefault(row["article_url"], []).append(row)
@@ -235,38 +412,14 @@ class DeliveryManager:
                 self.storage.touch_delivery_sold_check(url)
                 continue
 
-            # Mark sold in DB first so we don't re-check it
             self.storage.mark_delivery_sold(url)
-            art_stub = {
-                "url": url,
-                "board": sample.get("board", "HardwareSale"),
-                "title": sample.get("title", "已售出商品"),
-                "author": sample.get("author", "未知"),
-                "date": "",
-                "category": "賣",
-                "nrec": "-",
-            }
 
             for d_row in deliveries:
-                ch_id = d_row.get("channel_id")
-                msg_id = d_row.get("message_id")
-                if not ch_id or not msg_id or not str(ch_id).isdigit() or not str(msg_id).isdigit():
+                sub = self.storage.get_subscriber_by_id(d_row["subscriber_id"])
+                if not sub:
                     continue
-                try:
-                    sub = self.storage.get_subscriber_by_id(d_row["subscriber_id"])
-                    target = await self.resolve_subscriber_target(sub) if sub else None
-                    if target is None:
-                        continue
-                    msg = await target.fetch_message(int(msg_id))
-                    sold_embed = build_article_embed(
-                        art_stub,
-                        matched_keywords=[],
-                        detail=detail,
-                        is_sold_update=True,
-                    )
-                    await msg.edit(embed=sold_embed)
+                ok = await self.dispatcher.dispatch_sold_update(sub, d_row, detail)
+                if ok:
                     updated_count += 1
-                except Exception as e:
-                    logger.debug(f"更新已售出訊息 ({msg_id}) 略過: {e}")
 
         return updated_count

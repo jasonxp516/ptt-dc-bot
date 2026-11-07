@@ -82,14 +82,14 @@ class TestPTTBotUpgrades(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            # Initialize BotStorage -> should backup and migrate to schema v3 seamlessly
+            # Initialize BotStorage -> should backup and migrate to schema v4 seamlessly
             storage = BotStorage(
                 db_path=db_path,
                 default_channel_id="111111111111111111",
                 default_board="HardwareSale",
             )
             self.assertTrue(os.path.exists(f"{db_path}.bak"))
-            self.assertEqual(storage.get_setting("schema_version"), "3")
+            self.assertEqual(storage.get_setting("schema_version"), "4")
 
             # Verify migrated keywords belong to subscriber #1 (default guild)
             sub1_kws = [k["keyword"] for k in storage.get_keywords(subscriber_id=1)]

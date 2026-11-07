@@ -228,6 +228,18 @@ class BotStorage:
                             pass
                 self._run_schema_v3_migration(cur)
                 self._conn.commit()
+                schema_ver = 3
+
+            if schema_ver < 4:
+                if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
+                    bak_v3 = f"{self.db_path}.bak.v3"
+                    if not os.path.exists(bak_v3):
+                        try:
+                            shutil.copy2(self.db_path, bak_v3)
+                        except Exception:
+                            pass
+                self._run_schema_v4_migration(cur)
+                self._conn.commit()
 
     def _run_schema_v2_migration(self, cur: sqlite3.Cursor) -> None:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -246,6 +258,8 @@ class BotStorage:
                 enabled INTEGER NOT NULL DEFAULT 1,
                 dm_failed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT 'discord',
+                target_id TEXT NOT NULL DEFAULT '',
                 UNIQUE(scope, discord_id)
             )
             """
@@ -263,10 +277,10 @@ class BotStorage:
         cur.execute(
             """
             INSERT OR IGNORE INTO subscribers
-                (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, created_at)
-            VALUES ('guild', ?, '預設伺服器', ?, ?, 'owner', 1, ?)
+                (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, created_at, platform, target_id)
+            VALUES ('guild', ?, '預設伺服器', ?, ?, 'owner', 1, ?, 'discord', ?)
             """,
-            (self.default_guild_id, legacy_ch, legacy_mode, now_str),
+            (self.default_guild_id, legacy_ch, legacy_mode, now_str, legacy_ch or self.default_guild_id),
         )
         default_sub_row = cur.execute(
             "SELECT id FROM subscribers WHERE scope = 'guild' AND discord_id = ?",
@@ -492,6 +506,57 @@ class BotStorage:
             "ON CONFLICT(key) DO UPDATE SET value = '3'"
         )
 
+    def _run_schema_v4_migration(self, cur: sqlite3.Cursor) -> None:
+        """
+        Schema v4 Migration:
+        - 新增 platform TEXT NOT NULL DEFAULT 'discord' 支援多平台 (Discord, Telegram, Email)。
+        - 新增 target_id TEXT NOT NULL DEFAULT '' 統一跨平台推播目標定址。
+        - 就地遷移現有記錄：platform = 'discord', target_id = COALESCE(NULLIF(push_channel_id, ''), discord_id)。
+        - 建立效能索引：idx_subscribers_platform_target 與 idx_subscribers_platform_scope。
+        - 升級 settings 中 schema_version 至 '4'。
+        """
+        sub_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(subscribers)").fetchall()
+        }
+        if "platform" not in sub_cols:
+            cur.execute(
+                "ALTER TABLE subscribers ADD COLUMN platform TEXT NOT NULL DEFAULT 'discord'"
+            )
+        if "target_id" not in sub_cols:
+            cur.execute(
+                "ALTER TABLE subscribers ADD COLUMN target_id TEXT NOT NULL DEFAULT ''"
+            )
+
+        # 遷移現有資料記錄
+        cur.execute(
+            """
+            UPDATE subscribers
+            SET platform = 'discord'
+            WHERE platform IS NULL OR platform = ''
+            """
+        )
+        cur.execute(
+            """
+            UPDATE subscribers
+            SET target_id = COALESCE(NULLIF(push_channel_id, ''), discord_id)
+            WHERE target_id IS NULL OR target_id = ''
+            """
+        )
+
+        # 建立高效查詢索引
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_platform_target ON subscribers(platform, target_id)"
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscribers_platform_scope ON subscribers(platform, scope)"
+        )
+
+        # 標記 schema_version = 4
+        cur.execute(
+            "INSERT INTO settings (key, value) VALUES ('schema_version', '4') "
+            "ON CONFLICT(key) DO UPDATE SET value = '4'"
+        )
+
     # =====================================================================
     # Global Settings & Blacklist
     # =====================================================================
@@ -550,17 +615,46 @@ class BotStorage:
     def get_default_guild_subscriber(self) -> Dict[str, Any]:
         return self.get_or_create_subscriber("guild", self.default_guild_id, "預設伺服器")
 
-    def get_subscriber(self, scope: str, discord_id: str) -> Optional[Dict[str, Any]]:
+    def get_subscriber(
+        self,
+        scope: Optional[str] = None,
+        discord_id: Optional[str] = None,
+        platform: Optional[str] = None,
+        target_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Fix P2-3: Read-only lookup of a subscriber without creating a database row.
-        Used by autocomplete handlers so typing doesn't create phantom subscribers.
+        讀取訂閱者資料（不建立新列）。
+        [向後相容]: get_subscriber("user", "123456") 表現與原先完全一致。
+        [多平台擴充]: 支援傳入 platform 與 target_id 進行精確查詢。
         """
-        scope = "user" if scope == "user" else "guild"
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
-                (scope, str(discord_id)),
-            ).fetchone()
+            if target_id is not None:
+                tid = str(target_id)
+                if platform is not None:
+                    query = "SELECT * FROM subscribers WHERE platform = ? AND (target_id = ? OR discord_id = ?)"
+                    params: List[Any] = [str(platform), tid, tid]
+                else:
+                    query = "SELECT * FROM subscribers WHERE target_id = ? OR discord_id = ?"
+                    params = [tid, tid]
+                if scope is not None:
+                    query += " AND scope = ?"
+                    params.append("user" if scope == "user" else "guild")
+                row = self._conn.execute(query, tuple(params)).fetchone()
+                return dict(row) if row else None
+
+            # 標準相容路徑：以 scope 與 discord_id 查詢
+            norm_scope = "user" if (scope == "user") else "guild"
+            did = str(discord_id or "")
+            if platform is not None:
+                row = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ? AND platform = ?",
+                    (norm_scope, did, str(platform)),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
+                    (norm_scope, did),
+                ).fetchone()
             return dict(row) if row else None
 
     def get_or_create_subscriber_with_flag(
@@ -569,24 +663,51 @@ class BotStorage:
         discord_id: str,
         display_name: str = "",
         default_push_channel_id: Optional[str] = None,
+        platform: str = "discord",
+        target_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], bool]:
         """
-        Returns (subscriber_dict, is_newly_created).
+        返回 (subscriber_dict, is_newly_created)。
+        保持前 4 個引數之位置向後相容性，支援多平台傳入 platform 與 target_id。
         """
         scope = "user" if scope == "user" else "guild"
         discord_id = str(discord_id)
+        effective_platform = str(platform or "discord").lower()
+        effective_target_id = str(target_id) if target_id is not None else str(default_push_channel_id or discord_id)
+
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
-                (scope, discord_id),
-            ).fetchone()
+            # 先以 platform + (target_id 或 discord_id) 或 (scope + discord_id) 檢索
+            if effective_platform != "discord" and target_id is not None:
+                row = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE platform = ? AND (target_id = ? OR discord_id = ?)",
+                    (effective_platform, effective_target_id, discord_id),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE scope = ? AND discord_id = ?",
+                    (scope, discord_id),
+                ).fetchone()
+
             if row:
+                updates = []
+                params = []
                 if display_name and row["display_name"] != display_name:
+                    updates.append("display_name = ?")
+                    params.append(display_name[:60])
+                if target_id is not None and row["target_id"] != effective_target_id:
+                    updates.append("target_id = ?")
+                    params.append(effective_target_id)
+                if effective_platform != "discord" and row["platform"] != effective_platform:
+                    updates.append("platform = ?")
+                    params.append(effective_platform)
+                if updates:
+                    params.append(row["id"])
                     self._conn.execute(
-                        "UPDATE subscribers SET display_name = ? WHERE id = ?",
-                        (display_name[:60], row["id"]),
+                        f"UPDATE subscribers SET {', '.join(updates)} WHERE id = ?",
+                        tuple(params),
                     )
                     self._conn.commit()
+                    row = self._conn.execute("SELECT * FROM subscribers WHERE id = ?", (row["id"],)).fetchone()
                 return dict(row), False
 
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -605,10 +726,10 @@ class BotStorage:
             cur = self._conn.execute(
                 """
                 INSERT INTO subscribers
-                    (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, dm_failed, created_at)
-                VALUES (?, ?, ?, ?, 'keyword', ?, 1, 0, ?)
+                    (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, dm_failed, created_at, platform, target_id)
+                VALUES (?, ?, ?, ?, 'keyword', ?, 1, 0, ?, ?, ?)
                 """,
-                (scope, discord_id, display_name[:60], push_ch, tier, now_str),
+                (scope, discord_id, display_name[:60], push_ch, tier, now_str, effective_platform, effective_target_id),
             )
             self._conn.commit()
             sub_id = cur.lastrowid
@@ -621,11 +742,107 @@ class BotStorage:
         discord_id: str,
         display_name: str = "",
         default_push_channel_id: Optional[str] = None,
+        platform: str = "discord",
+        target_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         sub, _ = self.get_or_create_subscriber_with_flag(
-            scope, discord_id, display_name, default_push_channel_id
+            scope,
+            discord_id,
+            display_name,
+            default_push_channel_id,
+            platform=platform,
+            target_id=target_id,
         )
         return sub
+
+    def add_subscriber(
+        self,
+        scope: str = "user",
+        discord_id: Optional[str] = None,
+        display_name: str = "",
+        push_channel_id: Optional[str] = None,
+        platform: str = "discord",
+        target_id: Optional[str] = None,
+        tier: str = "free",
+        enabled: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        顯式新增或註冊各平台之訂閱者記錄。
+        支援平台: 'discord', 'telegram', 'email'。
+        """
+        norm_scope = "user" if scope == "user" else "guild"
+        plat = str(platform or "discord").lower().strip()
+        tid = str(target_id) if target_id is not None else str(push_channel_id or discord_id or "")
+
+        # 若未指定 discord_id，且非 discord 平台，使用 platform_target_id 避免 UNIQUE 衝突
+        if discord_id is not None:
+            did = str(discord_id)
+        elif plat == "discord":
+            did = str(tid or self.default_guild_id)
+        else:
+            did = f"{plat}_{tid}" if tid else str(time.time_ns())
+
+        pch = str(push_channel_id) if push_channel_id is not None else (tid if norm_scope == "guild" and plat == "discord" else None)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        with self._lock:
+            # 檢查是否已存在
+            existing = self.get_subscriber(scope=norm_scope, discord_id=did, platform=plat, target_id=tid)
+            if existing:
+                self._conn.execute(
+                    """
+                    UPDATE subscribers
+                    SET display_name = ?, push_channel_id = ?, target_id = ?, tier = ?, enabled = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        display_name[:60] or existing["display_name"],
+                        pch or existing["push_channel_id"],
+                        tid or existing["target_id"],
+                        tier if tier in TIER_QUOTAS else existing["tier"],
+                        1 if enabled else 0,
+                        existing["id"],
+                    ),
+                )
+                self._conn.commit()
+                return self.get_subscriber_by_id(existing["id"]) or existing
+
+            cur = self._conn.execute(
+                """
+                INSERT INTO subscribers
+                    (scope, discord_id, display_name, push_channel_id, push_mode, tier, enabled, dm_failed, created_at, platform, target_id)
+                VALUES (?, ?, ?, ?, 'keyword', ?, ?, 0, ?, ?, ?)
+                """,
+                (norm_scope, did, display_name[:60], pch, tier if tier in TIER_QUOTAS else "free", 1 if enabled else 0, now_str, plat, tid),
+            )
+            self._conn.commit()
+            sub_id = cur.lastrowid
+            row = self._conn.execute("SELECT * FROM subscribers WHERE id = ?", (sub_id,)).fetchone()
+            return dict(row)
+
+    def list_subscribers(
+        self,
+        platform: Optional[str] = None,
+        enabled_only: bool = False,
+        scope: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        列出訂閱者清單，支援平台 (platform)、啟用狀態 (enabled_only) 與作用域 (scope) 篩選。
+        """
+        with self._lock:
+            query = "SELECT * FROM subscribers WHERE 1=1"
+            params: List[Any] = []
+            if platform is not None:
+                query += " AND platform = ?"
+                params.append(str(platform).lower().strip())
+            if enabled_only:
+                query += " AND enabled = 1"
+            if scope is not None:
+                query += " AND scope = ?"
+                params.append("user" if scope == "user" else "guild")
+            query += " ORDER BY id ASC"
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+            return [dict(r) for r in rows]
 
     def get_subscriber_by_id(self, subscriber_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -634,11 +851,17 @@ class BotStorage:
             ).fetchone()
             return dict(row) if row else None
 
-    def get_all_enabled_subscribers(self) -> List[Dict[str, Any]]:
+    def get_all_enabled_subscribers(self, platform: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM subscribers WHERE enabled = 1 ORDER BY id ASC"
-            ).fetchall()
+            if platform is not None:
+                rows = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE enabled = 1 AND platform = ? ORDER BY id ASC",
+                    (str(platform).lower().strip(),),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM subscribers WHERE enabled = 1 ORDER BY id ASC"
+                ).fetchall()
             return [dict(r) for r in rows]
 
     def set_subscriber_enabled(self, subscriber_id: int, enabled: bool) -> None:
@@ -653,18 +876,40 @@ class BotStorage:
         self, subscriber_id: int, channel_id: Optional[str], reset_dm_failed: bool = True
     ) -> None:
         with self._lock:
+            cid_str = str(channel_id) if channel_id else None
             if reset_dm_failed:
-                self._conn.execute(
-                    "UPDATE subscribers SET push_channel_id = ?, dm_failed = 0, enabled = 1 WHERE id = ?",
-                    (str(channel_id) if channel_id else None, subscriber_id),
-                )
+                if cid_str:
+                    self._conn.execute(
+                        "UPDATE subscribers SET push_channel_id = ?, target_id = ?, dm_failed = 0, enabled = 1 WHERE id = ?",
+                        (cid_str, cid_str, subscriber_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE subscribers SET push_channel_id = NULL, dm_failed = 0, enabled = 1 WHERE id = ?",
+                        (subscriber_id,),
+                    )
             else:
-                self._conn.execute(
-                    "UPDATE subscribers SET push_channel_id = ? WHERE id = ?",
-                    (str(channel_id) if channel_id else None, subscriber_id),
-                )
+                if cid_str:
+                    self._conn.execute(
+                        "UPDATE subscribers SET push_channel_id = ?, target_id = ? WHERE id = ?",
+                        (cid_str, cid_str, subscriber_id),
+                    )
+                else:
+                    self._conn.execute(
+                        "UPDATE subscribers SET push_channel_id = NULL WHERE id = ?",
+                        (subscriber_id,),
+                    )
             if subscriber_id == 1 and channel_id:
                 self.set_setting("push_channel_id", str(channel_id))
+            self._conn.commit()
+
+    def update_subscriber_target(self, subscriber_id: int, target_id: str) -> None:
+        """更新訂閱者之跨平台目標定址 ID"""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE subscribers SET target_id = ? WHERE id = ?",
+                (str(target_id), subscriber_id),
+            )
             self._conn.commit()
 
     def update_subscriber_mode(self, subscriber_id: int, mode: str) -> None:
@@ -696,15 +941,12 @@ class BotStorage:
             self._conn.commit()
             return True
 
-    def forget_subscriber(self, scope: str, discord_id: str) -> bool:
-        """
-        Fix P2-6: Explicitly delete all dependent rows (including legacy tables without FK cascade)
-        and scoped conversation memory when forgetting a subscriber.
-        """
+    def forget_subscriber_by_id(self, subscriber_id: int) -> bool:
+        """依 subscriber_id 完全清除訂閱者及其關聯之關鍵字、模糊比對與推播記錄"""
         with self._lock:
             row = self._conn.execute(
-                "SELECT id FROM subscribers WHERE scope = ? AND discord_id = ?",
-                (scope, str(discord_id)),
+                "SELECT id, scope, discord_id FROM subscribers WHERE id = ?",
+                (subscriber_id,),
             ).fetchone()
             if not row:
                 return False
@@ -714,13 +956,24 @@ class BotStorage:
             self._conn.execute("DELETE FROM deliveries WHERE subscriber_id = ?", (sub_id,))
             self._conn.execute("DELETE FROM usage_counters WHERE subscriber_id = ?", (sub_id,))
             self._conn.execute("DELETE FROM subscribers WHERE id = ?", (sub_id,))
-            if scope == "user":
+            if row["scope"] == "user":
+                did = row["discord_id"]
                 self._conn.execute(
                     "DELETE FROM conversation_memory WHERE user_id = ? OR user_id LIKE ?",
-                    (str(discord_id), f"{discord_id}:%"),
+                    (str(did), f"{did}:%"),
                 )
             self._conn.commit()
             return True
+
+    def forget_subscriber(self, scope: str, discord_id: str) -> bool:
+        """
+        Fix P2-6: Explicitly delete all dependent rows (including legacy tables without FK cascade)
+        and scoped conversation memory when forgetting a subscriber.
+        """
+        sub = self.get_subscriber(scope, str(discord_id))
+        if not sub:
+            return False
+        return self.forget_subscriber_by_id(sub["id"])
 
     def get_push_channel_id(self, subscriber_id: int = 1) -> Optional[int]:
         sub = self.get_subscriber_by_id(subscriber_id)
