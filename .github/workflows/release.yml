@@ -29,6 +29,7 @@ jobs:
       DB_PATH: /tmp/test.db
       PYTHONDONTWRITEBYTECODE: '1'
       PYTHONPYCACHEPREFIX: /tmp/pycache
+      PYTHONPATH: .
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -43,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt pyyaml
 
       - name: Shell script syntax check
         run: |
@@ -88,18 +89,21 @@ jobs:
           # 1. Windows Archive (Zip)
           for f in "${CORE_FILES[@]}"; do cp "$f" staging_win/; done
           cp start_windows.bat install.ps1 staging_win/
+          cp -r assets staging_win/
           (cd staging_win && zip -q -r "../dist/ptt-dc-bot-${VERSION}-windows.zip" .)
 
           # 2. macOS Archive (tar.gz)
           for f in "${CORE_FILES[@]}"; do cp "$f" staging_mac/; done
           cp start_mac.command install.sh staging_mac/
           chmod +x staging_mac/start_mac.command staging_mac/install.sh
+          cp -r assets staging_mac/
           tar -czf "dist/ptt-dc-bot-${VERSION}-macos.tar.gz" -C staging_mac .
 
           # 3. Linux Archive (tar.gz)
           for f in "${CORE_FILES[@]}"; do cp "$f" staging_linux/; done
           cp install.sh start_bg.sh stop_bg.sh restart_bg.sh ptt-bot.service docker-compose.yml Dockerfile .dockerignore staging_linux/
           chmod +x staging_linux/install.sh staging_linux/start_bg.sh staging_linux/stop_bg.sh staging_linux/restart_bg.sh
+          cp -r assets staging_linux/
           tar -czf "dist/ptt-dc-bot-${VERSION}-linux.tar.gz" -C staging_linux .
 
           # Clean up staging directories
@@ -118,7 +122,9 @@ jobs:
             dist/ptt-dc-bot-${{ steps.version.outputs.tag }}-linux.tar.gz
           generate_release_notes: true
           draft: false
-          prerelease: ${{ startsWith(steps.version.outputs.tag, 'v0.0.0') || contains(steps.version.outputs.tag, '-dev') }}
+          prerelease: ${{ startsWith(steps.version.outputs.tag, 'v0.0.0') || contains(steps.version.outputs.tag, '-dev') || contains(steps.version.outputs.tag, '-beta') || contains(steps.version.outputs.tag, '-alpha') || contains(steps.version.outputs.tag, '-rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker-publish:
     name: Build & Push Multi-Arch Docker Image
