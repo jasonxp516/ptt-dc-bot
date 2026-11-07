@@ -122,6 +122,28 @@ class TestTelegramAPIClient(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(res["result"]["message_id"], 100)
             mock_sleep.assert_called_once_with(2.0)  # retry_after (1) + 1.0
 
+    @patch("asyncio.sleep", return_value=None)
+    async def test_rate_limit_backoff_retry_null_parameters(self, mock_sleep):
+        """TEST-TG-04B: HTTP 429 回應中 parameters 為 null 時防禦處理"""
+        mock_resp_429 = AsyncMock()
+        mock_resp_429.status = 429
+        mock_resp_429.json = AsyncMock(return_value={"ok": False, "parameters": None})
+
+        mock_resp_200 = AsyncMock()
+        mock_resp_200.status = 200
+        mock_resp_200.json = AsyncMock(return_value={"ok": True, "result": {"message_id": 101}})
+
+        mock_session = MagicMock()
+        mock_session.post.side_effect = [
+            AsyncMock(__aenter__=AsyncMock(return_value=mock_resp_429), __aexit__=AsyncMock(return_value=None)),
+            AsyncMock(__aenter__=AsyncMock(return_value=mock_resp_200), __aexit__=AsyncMock(return_value=None)),
+        ]
+
+        with patch.object(self.client, "_get_session", new_callable=AsyncMock, return_value=mock_session):
+            res = await self.client.request("sendMessage", {"text": "hi"})
+            self.assertTrue(res["ok"])
+            mock_sleep.assert_called_once_with(4.0)  # default 3 + 1.0
+
     async def test_http_403_forbidden_handling(self):
         """TEST-TG-05: HTTP 403 用戶阻擋偵測"""
         mock_resp_403 = AsyncMock()
@@ -402,6 +424,67 @@ class TestTelegramBotCommandsAndCallbacks(unittest.IsolatedAsyncioTestCase):
         self.mock_storage.remove_keyword.assert_called_with("101", subscriber_id=5)
         self.mock_api.answer_callback_query.assert_called_once()
         self.assertIn("已刪除", self.mock_api.answer_callback_query.call_args[1]["text"])
+
+    async def test_handle_message_null_text_no_crash(self):
+        """TEST-TG-13: message.text 為 null/None 時防禦不拋出例外"""
+        msg_none = {
+            "message_id": 99,
+            "chat": {"id": 12345, "type": "private"},
+            "text": None,
+        }
+        await self.bot._handle_message(msg_none)
+        self.mock_api.send_message.assert_not_called()
+
+    async def test_handle_message_missing_or_invalid_chat_dict(self):
+        """TEST-TG-14: message 缺少 chat dict 或格式無效時安全返回"""
+        for malformed_chat in [None, {}, "invalid_chat", {"id": None}]:
+            msg_bad = {
+                "message_id": 100,
+                "chat": malformed_chat,
+                "text": "/start",
+            }
+            await self.bot._handle_message(msg_bad)
+            self.mock_api.send_message.assert_not_called()
+
+    async def test_callback_query_chat_none_defensive_rejection(self):
+        """TEST-TG-15: callback_query 之 message.chat 為 null/None 時防禦處理"""
+        cb = {
+            "id": "cb_no_chat",
+            "data": "del_kw:101",
+            "message": {"chat": None},
+            "from": {"id": 12345, "first_name": "Alice"},
+        }
+        await self.bot._handle_callback_query(cb)
+        self.mock_api.answer_callback_query.assert_called_once_with(
+            "cb_no_chat", text="[錯誤] 無效操作"
+        )
+
+    async def test_polling_loop_skip_missing_or_invalid_update_id(self):
+        """TEST-TG-16: polling 迴圈遇到缺少 update_id 或非字典更新時跳過並繼續執行"""
+        malformed_updates = [
+            "not_a_dict",
+            {"missing_update_id": True},
+            {"update_id": None},
+            {"update_id": 200, "message": {"chat": {"id": 12345}, "text": "/help"}},
+        ]
+        call_count = 0
+
+        async def fake_get_updates(offset=None, timeout=20):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return malformed_updates
+            self.bot._running = False
+            return []
+
+        self.mock_api.get_updates = AsyncMock(side_effect=fake_get_updates)
+
+        with patch("asyncio.sleep", return_value=None):
+            await self.bot.start_polling()
+
+        self.assertEqual(self.bot.last_update_id, 201)
+        self.mock_api.send_message.assert_called_once()
+        self.assertIn("操作手冊", self.mock_api.send_message.call_args[0][1])
 
 
 class TestConfigAndMultiPlatformDeliveryWiring(unittest.IsolatedAsyncioTestCase):

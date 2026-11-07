@@ -69,7 +69,7 @@ class TelegramAPIClient:
 
                     # 2. HTTP 429 速率限制退避
                     if resp.status == 429:
-                        params = data.get("parameters", {})
+                        params = data.get("parameters") or {}
                         retry_after = int(params.get("retry_after", 3))
                         logger.warning(
                             f"[警告] Telegram API 429 限速，等待 {retry_after} 秒後重試..."
@@ -523,11 +523,13 @@ class TelegramBot:
         }
 
     async def _handle_message(self, message: Dict[str, Any]) -> None:
-        text = message.get("text", "").strip()
+        text = (message.get("text") or "").strip()
         if not text or not text.startswith("/"):
             return
 
-        chat = message["chat"]
+        chat = message.get("chat")
+        if not chat or not isinstance(chat, dict) or not chat.get("id"):
+            return
         user = message.get("from")
         sub = self._resolve_subscriber(chat, user)
         chat_id = chat["id"]
@@ -724,15 +726,16 @@ class TelegramBot:
     async def _handle_callback_query(self, cb: Dict[str, Any]) -> None:
         cb_id = cb["id"]
         data = cb.get("data", "")
-        msg = cb.get("message", {})
-        chat_id = msg.get("chat", {}).get("id")
+        msg = cb.get("message") or {}
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("id")
         user = cb.get("from", {})
 
         if not chat_id:
             await self.api.answer_callback_query(cb_id, text="[錯誤] 無效操作")
             return
 
-        sub = self._resolve_subscriber(msg["chat"], user)
+        sub = self._resolve_subscriber(chat, user)
 
         if data.startswith("del_kw:"):
             if not self.storage:
@@ -768,7 +771,9 @@ class TelegramBot:
             try:
                 updates = await self.api.get_updates(offset=self.last_update_id, timeout=20)
                 for u in updates:
-                    u_id = u["update_id"]
+                    u_id = u.get("update_id") if isinstance(u, dict) else None
+                    if u_id is None:
+                        continue
                     self.last_update_id = u_id + 1
                     try:
                         await self._process_update(u)

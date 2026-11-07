@@ -187,7 +187,7 @@ class EmailNotificationProvider(BaseNotificationProvider):
         subscriber: Dict[str, Any],
         item: Dict[str, Any],
         to_addrs: List[str],
-        scope_label: str,
+        scope_label: str = "",
     ) -> EmailMessage:
         """建立單篇 PTT 文章通知之 MIME multipart/alternative 郵件。"""
         art = item.get("article", {})
@@ -210,9 +210,10 @@ class EmailNotificationProvider(BaseNotificationProvider):
         ai_note = detail.get("ai_summary_note") or ""
 
         # 主旨與防注入清理
+        clean_board = clean_header_value(board)
         clean_title = clean_header_value(title)
         clean_price = clean_header_value(price)
-        subject_str = f"[PTT {board}] {clean_title} — {clean_price}"
+        subject_str = clean_header_value(f"[PTT {clean_board}] {clean_title} — {clean_price}")
 
         msg = EmailMessage()
         msg["Subject"] = subject_str

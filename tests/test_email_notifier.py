@@ -278,6 +278,27 @@ class TestEmailNotificationFormattingAndXSS(unittest.TestCase):
         self.assertIn("&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;", html_content)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", html_content)
 
+    def test_single_article_subject_crlf_sanitization(self):
+        """驗證文章看板名稱或欄位含有換行注入時，主旨依然被安全過濾成單行"""
+        item = {
+            "article": {
+                "board": "HardwareSale\r\nBcc: evil@attacker.com",
+                "title": "Clean Title\nSubject: Injected",
+                "author": "author",
+                "url": "https://ptt.cc/test",
+            },
+            "detail": {"extracted_price": "1000\r\nTest"},
+        }
+        msg = self.provider._build_single_article_message(
+            subscriber={"id": 1, "scope": "user", "display_name": "測試用戶"},
+            item=item,
+            to_addrs=["user@example.com"],
+            scope_label="[個人追蹤] 測試用戶",
+        )
+        self.assertNotIn("\r", msg["Subject"])
+        self.assertNotIn("\n", msg["Subject"])
+        self.assertIn("HardwareSale Bcc: evil@attacker.com", msg["Subject"])
+
 
 class TestEmailNotificationProviderAsyncDeliver(unittest.IsolatedAsyncioTestCase):
     """測試非同步推播 deliver 與 update_sold 流程"""
