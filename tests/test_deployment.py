@@ -583,6 +583,375 @@ class TestSetupWizard(BaseDeploymentTestCase):
         for val in ("zh_TW", "zh-tw", "zh", "fr", "ja", "", "   ", None):
             self.assertEqual(config._parse_language(val), "zh_TW", f"Failed for {val}")
 
+    def test_parse_platform_selection(self):
+        """M4: Test parse_platform_selection handles single, combination, all, defaults, quit, and legacy tokens."""
+        # Single selections
+        self.assertEqual(setup_wizard.parse_platform_selection("1"), (["discord"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("2"), (["telegram"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("3"), (["email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("discord"), (["discord"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("telegram"), (["telegram"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("email"), (["email"], None))
+
+        # Combinations
+        self.assertEqual(setup_wizard.parse_platform_selection("1,2"), (["discord", "telegram"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("1, 3"), (["discord", "email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("2,3"), (["telegram", "email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("1+2+3"), (["discord", "telegram", "email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("all"), (["discord", "telegram", "email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("全部"), (["discord", "telegram", "email"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("*"), (["discord", "telegram", "email"], None))
+
+        # Default empty
+        self.assertEqual(setup_wizard.parse_platform_selection(""), (["discord"], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("   "), (["discord"], None))
+
+        # Quit
+        self.assertEqual(setup_wizard.parse_platform_selection("q"), ([], None))
+        self.assertEqual(setup_wizard.parse_platform_selection("QUIT"), ([], None))
+
+        # Legacy Discord token auto-detection
+        self.assertEqual(
+            setup_wizard.parse_platform_selection("mock_token"),
+            (["discord"], "mock_token"),
+        )
+        self.assertEqual(
+            setup_wizard.parse_platform_selection("  Bot mock_user_token_123  "),
+            (["discord"], "mock_user_token_123"),
+        )
+        self.assertEqual(
+            setup_wizard.parse_platform_selection("wrong_token"),
+            (["discord"], "wrong_token"),
+        )
+
+    def test_validate_telegram_token_success(self):
+        """M4: Test Telegram Bot token validation returns bot ID and username on HTTP 200."""
+        mock_body = json.dumps({
+            "ok": True,
+            "result": {"id": 123456789, "is_bot": True, "username": "PTTTestBot"}
+        }).encode("utf-8")
+        mock_resp = MagicMock(status=200)
+        mock_resp.read.return_value = mock_body
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+            valid, bot_id, username, err = setup_wizard.validate_telegram_token("123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ")
+            self.assertTrue(valid)
+            self.assertEqual(bot_id, "123456789")
+            self.assertEqual(username, "PTTTestBot")
+            self.assertIsNone(err)
+
+            req = mock_urlopen.call_args[0][0]
+            self.assertIn("/bot123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ/getMe", req.full_url)
+
+    def test_validate_telegram_token_401_unauthorized(self):
+        """M4: Test Telegram token validation handles HTTP 401 Unauthorized gracefully."""
+        err_response = io.BytesIO(b'{"ok": false, "error_code": 401, "description": "Unauthorized"}')
+        http_err = urllib.error.HTTPError(
+            url="https://api.telegram.org/bot123:bad_token/getMe",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=err_response,
+        )
+        with patch("urllib.request.urlopen", side_effect=http_err):
+            valid, bot_id, username, err = setup_wizard.validate_telegram_token("123:bad_token")
+            self.assertFalse(valid)
+            self.assertIsNone(bot_id)
+            self.assertIn("401", err)
+
+    def test_validate_telegram_token_empty_and_malformed_rejects_offline(self):
+        """M4: Empty or malformed Telegram token is rejected offline without HTTP request."""
+        with patch("urllib.request.urlopen") as mock_url:
+            valid, _, _, err = setup_wizard.validate_telegram_token("")
+            self.assertFalse(valid)
+            self.assertEqual(err, "Token 不能為空")
+
+            valid, _, _, err = setup_wizard.validate_telegram_token("no_colon_token")
+            self.assertFalse(valid)
+            self.assertIn("格式不正確", err)
+
+            valid, _, _, err = setup_wizard.validate_telegram_token("abc:secret")
+            self.assertFalse(valid)
+            self.assertIn("純數字之 Bot ID", err)
+
+            mock_url.assert_not_called()
+
+    def test_is_valid_telegram_chat_id(self):
+        """M4: Validate Telegram Chat ID format check."""
+        self.assertTrue(setup_wizard.is_valid_telegram_chat_id("123456789"))
+        self.assertTrue(setup_wizard.is_valid_telegram_chat_id("-123456789"))
+        self.assertTrue(setup_wizard.is_valid_telegram_chat_id("-1001234567890"))
+        self.assertTrue(setup_wizard.is_valid_telegram_chat_id("@my_channel"))
+
+        self.assertFalse(setup_wizard.is_valid_telegram_chat_id(""))
+        self.assertFalse(setup_wizard.is_valid_telegram_chat_id("not_a_valid_id!"))
+
+    def test_validate_telegram_chat_id(self):
+        """M4: Test validate_telegram_chat_id with mocked REST responses."""
+        mock_body = json.dumps({
+            "ok": True,
+            "result": {"id": 123456, "type": "private", "username": "alice"}
+        }).encode("utf-8")
+        mock_resp = MagicMock(status=200)
+        mock_resp.read.return_value = mock_body
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            valid, title, err = setup_wizard.validate_telegram_chat_id("123456:TOKEN", "123456")
+            self.assertTrue(valid)
+            self.assertEqual(title, "alice")
+            self.assertIsNone(err)
+
+        # 400 Bad Request (Chat not found)
+        http_err = urllib.error.HTTPError(
+            url="https://api.telegram.org/bot...",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=io.BytesIO(b'{"ok": false, "error_code": 400, "description": "chat not found"}'),
+        )
+        with patch("urllib.request.urlopen", side_effect=http_err):
+            valid, title, err = setup_wizard.validate_telegram_chat_id("123456:TOKEN", "999999")
+            self.assertFalse(valid)
+            self.assertIn("400 Bad Request", err)
+
+    def test_is_valid_email(self):
+        """M4: Validate RFC 5322 email syntax and header injection protection."""
+        self.assertTrue(setup_wizard.is_valid_email("user@example.com"))
+        self.assertTrue(setup_wizard.is_valid_email("first.last+tag@sub.domain.co"))
+        self.assertTrue(setup_wizard.is_valid_email("dev_test123@gmail.com"))
+
+        self.assertFalse(setup_wizard.is_valid_email(""))
+        self.assertFalse(setup_wizard.is_valid_email("no_at_domain.com"))
+        self.assertFalse(setup_wizard.is_valid_email("user@localhost"))
+        self.assertFalse(setup_wizard.is_valid_email("user@domain..com"))
+        self.assertFalse(setup_wizard.is_valid_email("user@domain.com\r\nBcc: evil@hacker.com"))
+        self.assertFalse(setup_wizard.is_valid_email("user with spaces@domain.com"))
+
+    def test_parse_and_validate_recipients(self):
+        """M4: Test parsing multiple comma/semicolon recipients with deduplication."""
+        ok, recipients, err = setup_wizard.parse_and_validate_recipients("a@b.com, c@d.com; a@b.com")
+        self.assertTrue(ok)
+        self.assertEqual(recipients, ["a@b.com", "c@d.com"])
+        self.assertIsNone(err)
+
+        ok, recipients, err = setup_wizard.parse_and_validate_recipients("invalid_email")
+        self.assertFalse(ok)
+        self.assertIn("格式不正確", err)
+
+    def test_validate_smtp_credentials_success_port_587(self):
+        """M4: Test SMTP credential validation on port 587 (STARTTLS)."""
+        import smtplib
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__.return_value = mock_smtp
+        with patch("smtplib.SMTP", return_value=mock_smtp) as mock_cls:
+            valid, err = setup_wizard.validate_smtp_credentials(
+                host="smtp.gmail.com",
+                port=587,
+                user="user@example.com",
+                password="app_password",
+                use_tls=True,
+            )
+            self.assertTrue(valid)
+            self.assertIsNone(err)
+            mock_cls.assert_called_once_with("smtp.gmail.com", 587, timeout=10.0)
+            mock_smtp.starttls.assert_called_once()
+            mock_smtp.login.assert_called_once_with("user@example.com", "app_password")
+
+    def test_validate_smtp_credentials_success_port_465_ssl(self):
+        """M4: Test SMTP credential validation on port 465 (SMTPS implicit SSL)."""
+        import smtplib
+        mock_ssl = MagicMock()
+        mock_ssl.__enter__.return_value = mock_ssl
+        with patch("smtplib.SMTP_SSL", return_value=mock_ssl) as mock_cls:
+            valid, err = setup_wizard.validate_smtp_credentials(
+                host="smtp.gmail.com",
+                port=465,
+                user="user@example.com",
+                password="app_password",
+            )
+            self.assertTrue(valid)
+            self.assertIsNone(err)
+            mock_cls.assert_called_once()
+            mock_ssl.login.assert_called_once_with("user@example.com", "app_password")
+
+    def test_validate_smtp_credentials_auth_error_535(self):
+        """M4: Test SMTP authentication failure (535) provides helpful guidance on App Password."""
+        import smtplib
+        mock_smtp = MagicMock()
+        mock_smtp.__enter__.return_value = mock_smtp
+        mock_smtp.login.side_effect = smtplib.SMTPAuthenticationError(535, b"Auth failed")
+        with patch("smtplib.SMTP", return_value=mock_smtp):
+            valid, err = setup_wizard.validate_smtp_credentials(
+                host="smtp.gmail.com",
+                port=587,
+                user="user@example.com",
+                password="wrong_password",
+            )
+            self.assertFalse(valid)
+            self.assertIn("535", err)
+            self.assertIn("應用程式密碼", err)
+
+    def test_validate_smtp_credentials_timeout_and_invalid_inputs(self):
+        """M4: Test SMTP validation timeout and invalid inputs handling."""
+        import smtplib
+        import socket
+        with patch("smtplib.SMTP", side_effect=socket.timeout("Connection timed out")):
+            valid, err = setup_wizard.validate_smtp_credentials(
+                host="10.255.255.1",
+                port=587,
+                user="u",
+                password="p",
+            )
+            self.assertFalse(valid)
+            self.assertIn("超時", err)
+
+        # Empty host
+        valid, err = setup_wizard.validate_smtp_credentials("", 587, "u", "p")
+        self.assertFalse(valid)
+        self.assertIn("不能為空", err)
+
+        # Invalid port
+        valid, err = setup_wizard.validate_smtp_credentials("smtp.gmail.com", "invalid_port", "u", "p")
+        self.assertFalse(valid)
+        self.assertIn("有效整數", err)
+
+    def test_write_env_file_multi_platform(self):
+        """M4: write_env_file serializes multi-platform flags and credentials."""
+        ok = setup_wizard.write_env_file(
+            env_path=self.dummy_env_path,
+            discord_token="dc_tok_123",
+            enable_telegram=True,
+            telegram_bot_token="123456:TG_TOKEN",
+            telegram_chat_id="987654321",
+            enable_email=True,
+            smtp_host="smtp.gmail.com",
+            smtp_port=587,
+            smtp_user="sender@gmail.com",
+            smtp_password="app_password_16",
+            email_to="recipient@example.com",
+        )
+        self.assertTrue(ok)
+        with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        self.assertIn("ENABLE_DISCORD=true", content)
+        self.assertIn("DISCORD_TOKEN=dc_tok_123", content)
+        self.assertIn("ENABLE_TELEGRAM=true", content)
+        self.assertIn("TELEGRAM_BOT_TOKEN=123456:TG_TOKEN", content)
+        self.assertIn("TELEGRAM_CHAT_ID=987654321", content)
+        self.assertIn("ENABLE_EMAIL=true", content)
+        self.assertIn("SMTP_HOST=smtp.gmail.com", content)
+        self.assertIn("SMTP_PORT=587", content)
+        self.assertIn("SMTP_USER=sender@gmail.com", content)
+        self.assertIn("EMAIL_TO=recipient@example.com", content)
+
+        if os.name != "nt":
+            mode = stat.S_IMODE(os.stat(self.dummy_env_path).st_mode)
+            self.assertEqual(mode, 0o600)
+
+    def test_run_wizard_selects_telegram_only(self):
+        """M4: Setup wizard supports selecting only Telegram (platform 2)."""
+        inputs = iter([
+            "2",               # Select Telegram
+            "123456:ABC-DEF",  # Telegram bot token
+            "98765432",        # Telegram chat ID
+            "",                # Skip Groq
+            "",                # Default board
+            "1",               # Language: zh_TW
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_telegram_token", return_value=(True, "123456", "PTTTG_Bot", None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("ENABLE_DISCORD=false", content)
+            self.assertIn("ENABLE_TELEGRAM=true", content)
+            self.assertIn("TELEGRAM_BOT_TOKEN=123456:ABC-DEF", content)
+            self.assertIn("TELEGRAM_CHAT_ID=98765432", content)
+            self.assertIn("ENABLE_EMAIL=false", content)
+
+    def test_run_wizard_selects_email_only(self):
+        """M4: Setup wizard supports selecting only Email (platform 3)."""
+        inputs = iter([
+            "3",                  # Select Email
+            "smtp.gmail.com",     # SMTP host
+            "587",                # SMTP port
+            "bot@gmail.com",      # SMTP user
+            "pass_16_digits",     # SMTP password
+            "y",                  # Use TLS
+            "alert@example.com",  # Recipient email
+            "",                   # Skip Groq
+            "",                   # Default board
+            "1",                  # Language: zh_TW
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_smtp_credentials", return_value=(True, None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("ENABLE_DISCORD=false", content)
+            self.assertIn("ENABLE_TELEGRAM=false", content)
+            self.assertIn("ENABLE_EMAIL=true", content)
+            self.assertIn("SMTP_HOST=smtp.gmail.com", content)
+            self.assertIn("SMTP_PORT=587", content)
+            self.assertIn("SMTP_USER=bot@gmail.com", content)
+            self.assertIn("EMAIL_TO=alert@example.com", content)
+
+    def test_run_wizard_multi_platform_all(self):
+        """M4: Setup wizard supports selecting multiple platforms (1,2,3)."""
+        inputs = iter([
+            "1,2,3",              # Select all three platforms
+            "mock_dc_token",      # Discord token
+            "123456:TG_TOKEN",    # Telegram token
+            "11223344",           # Telegram chat ID
+            "smtp.gmail.com",     # SMTP host
+            "587",                # SMTP port
+            "mybot@gmail.com",    # SMTP user
+            "my_secret_pass",     # SMTP password
+            "y",                  # Use TLS
+            "my_email@gmail.com", # Recipient
+            "",                   # Skip Groq
+            "",                   # Default board
+            "1",                  # Language: zh_TW
+        ])
+
+        with patch("sys.stdin.isatty", return_value=True), \
+             patch("builtins.input", side_effect=lambda _: next(inputs)), \
+             patch("sys.stdout", new_callable=io.StringIO), \
+             patch("setup_wizard.validate_discord_token", return_value=(True, "111", "DCBot", None)), \
+             patch("setup_wizard.validate_telegram_token", return_value=(True, "123456", "TGBot", None)), \
+             patch("setup_wizard.validate_smtp_credentials", return_value=(True, None)):
+
+            success = setup_wizard.run_wizard(env_path=self.dummy_env_path)
+            self.assertTrue(success)
+
+            with open(self.dummy_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            self.assertIn("ENABLE_DISCORD=true", content)
+            self.assertIn("ENABLE_TELEGRAM=true", content)
+            self.assertIn("ENABLE_EMAIL=true", content)
+            self.assertIn("DISCORD_TOKEN=mock_dc_token", content)
+            self.assertIn("TELEGRAM_BOT_TOKEN=123456:TG_TOKEN", content)
+            self.assertIn("SMTP_USER=mybot@gmail.com", content)
+
+
 
 # =============================================================================
 # 2. Bot Startup Interception Tests (F06–F08)
