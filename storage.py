@@ -25,6 +25,14 @@ from config import (
     TIER_QUOTAS,
     sanitize_user_input,
 )
+from timeutil import now_tpe_str, today_tpe_str
+
+_USAGE_KIND_MAP = {
+    "ai": ("daily_ai_chats", 20),
+    "ai_chat": ("daily_ai_chats", 20),
+    "scan": ("daily_scans", 20),
+    "board_add": ("daily_board_adds", 5),
+}
 
 
 def compute_dedupe_hash(board: str, author: str, title: str) -> str:
@@ -1159,7 +1167,9 @@ class BotStorage:
         return TIER_QUOTAS.get(tier, TIER_QUOTAS["free"])
 
     def get_daily_usage(self, subscriber_id: int, kind: str) -> int:
-        day_str = datetime.now().strftime("%Y-%m-%d")
+        if kind not in _USAGE_KIND_MAP:
+            raise ValueError(f"不支援的額度統計類型: {kind}")
+        day_str = today_tpe_str()
         with self._lock:
             row = self._conn.execute(
                 "SELECT count FROM usage_counters WHERE subscriber_id = ? AND day = ? AND kind = ?",
@@ -1168,10 +1178,12 @@ class BotStorage:
             return int(row["count"]) if row else 0
 
     def check_and_increment_usage(self, subscriber_id: int, kind: str) -> Tuple[bool, int, int]:
+        if kind not in _USAGE_KIND_MAP:
+            raise ValueError(f"不支援的額度統計類型: {kind}")
         quota = self.get_subscriber_quota(subscriber_id)
-        limit_key = "daily_ai_chats" if kind == "ai_chat" else "daily_scans"
-        limit = quota.get(limit_key, 20)
-        day_str = datetime.now().strftime("%Y-%m-%d")
+        limit_key, default_limit = _USAGE_KIND_MAP[kind]
+        limit = quota.get(limit_key, default_limit)
+        day_str = today_tpe_str()
 
         with self._lock:
             current = self.get_daily_usage(subscriber_id, kind)
@@ -1255,8 +1267,40 @@ class BotStorage:
         """
         return not bool(board_info.get("initialized"))
 
+    def prune_idle_boards(self, min_idle_seconds: int = 86400) -> int:
+        """
+        Phase 2.4: Reclaim global board slots occupied by boards that have 0 active subscriber rules.
+        Never removes `self.default_board` ('HardwareSale').
+        """
+        now_ts = int(time.time())
+        removed_count = 0
+        with self._lock:
+            boards = self.get_boards()
+            for b in boards:
+                b_name = b["name"]
+                if b_name.lower() == self.default_board.lower():
+                    continue
+                if self.has_active_rules_for_board(b_name):
+                    continue
+                if min_idle_seconds > 0:
+                    last_scan = int(b.get("last_scanned_at") or 0)
+                    if last_scan > 0 and (now_ts - last_scan) < min_idle_seconds:
+                        continue
+                    if last_scan == 0 and b.get("added_at"):
+                        try:
+                            added_dt = datetime.strptime(b["added_at"], "%Y-%m-%d %H:%M:%S")
+                            if (datetime.now() - added_dt).total_seconds() < min_idle_seconds:
+                                continue
+                        except Exception:
+                            pass
+                self._conn.execute("DELETE FROM boards WHERE name = ? COLLATE NOCASE", (b_name,))
+                removed_count += 1
+            if removed_count > 0:
+                self._conn.commit()
+        return removed_count
+
     def add_board(self, board_name: str) -> bool:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
         with self._lock:
             existing = self._conn.execute(
                 "SELECT name FROM boards WHERE name = ? COLLATE NOCASE", (board_name,)
@@ -1265,7 +1309,11 @@ class BotStorage:
                 return False
             total_boards = self._conn.execute("SELECT COUNT(*) as c FROM boards").fetchone()["c"]
             if total_boards >= MAX_GLOBAL_ACTIVE_BOARDS:
-                return False
+                # Phase 2.4: Auto-prune orphan boards with 0 active rules before rejecting
+                self.prune_idle_boards(min_idle_seconds=0)
+                total_boards = self._conn.execute("SELECT COUNT(*) as c FROM boards").fetchone()["c"]
+                if total_boards >= MAX_GLOBAL_ACTIVE_BOARDS:
+                    return False
             self._conn.execute(
                 "INSERT INTO boards (name, added_at, initialized, last_scanned_at) VALUES (?, ?, 0, 0)",
                 (board_name, now_str),
@@ -2054,7 +2102,9 @@ class BotStorage:
             self._conn.execute("DELETE FROM article_ai_cache WHERE created_at < ?", (cutoff_cache,))
             self._conn.execute("DELETE FROM deliveries WHERE delivered_at < ?", (cutoff_seen,))
             self._conn.commit()
-            return cur.rowcount
+            rowcount = cur.rowcount
+        self.prune_idle_boards(min_idle_seconds=86400)
+        return rowcount
 
     def backup_database_atomic(self, dest_path: str) -> None:
         """

@@ -338,30 +338,68 @@ def escape_prompt_xml(text: str) -> str:
     return s
 
 
-def _user_prompt_has_intent(user_prompt: str, action: str) -> bool:
+def wrap_untrusted(text: Any, max_len: int = 1200) -> str:
     """
-    Checks whether user prompt contains intent for delete or write actions.
-    Used for Guard A4 prompt-injection defense when reading untrusted PTT content.
+    Phase 2.1: Safely escape XML characters and closing boundary tags, then wrap
+    untrusted external PTT content in `<untrusted_ptt_content>...</untrusted_ptt_content>`.
+    """
+    if text is None:
+        return "<untrusted_ptt_content></untrusted_ptt_content>"
+    raw = str(text)[:max_len]
+    return f"<untrusted_ptt_content>{escape_prompt_xml(raw)}</untrusted_ptt_content>"
+
+
+def _user_prompt_has_intent(
+    user_prompt: str, action: str, target_arg: str = ""
+) -> bool:
+    """
+    Phase 2.2: Strict intent guard for delete or write actions after reading untrusted PTT content.
+    - Enforces word boundaries (\\b) on English verbs so 'offset' does not match 'set'.
+    - Removes overly broad Chinese substrings like '不要', '想找', '幫我找', or bare '設定'.
+    - When `target_arg` is provided, verifies at least one meaningful token from `target_arg`
+      appears in `user_prompt` (unless `target_arg` is a numeric rule ID).
     """
     if not user_prompt:
         return False
     prompt_lower = user_prompt.lower()
     if action in DELETE_TOOLS_SET or action == "delete":
-        return bool(
+        has_verb = bool(
             re.search(
-                r"(刪除|移除|取消|清掉|清空|拿掉|停止|不要|別再|修改|改掉|換成|remove|delete|clear|stop)",
+                r"(?:刪除|移除|取消追蹤|取消訂閱|清掉|清空|拿掉|停止追蹤|別再追|不再追"
+                r"|\b(?:remove|delete|untrack|unsubscribe|clear)\b)",
                 prompt_lower,
             )
         )
-    # Check write intent for non-delete tools (add, update, verify_and_add)
-    return bool(
-        re.search(
-            r"(新增|加入|追蹤|登記|設定|增加|加上|更新|修改|調整|監視|盯梢"
-            r"|想買|想收|想找|要買|要收|幫我買|幫我收|幫我找|收購|物色|徵求"
-            r"|add|track|follow|set|watch|update|buy|want)",
-            prompt_lower,
+        if not has_verb:
+            return False
+    else:
+        has_verb = bool(
+            re.search(
+                r"(?:新增|加入追蹤|加入看板|開始追蹤|幫我追|幫我盯|追蹤|訂閱|登記"
+                r"|設定追蹤|設定規則|設定關鍵字|設定看板|設定預算|修改關鍵字|修改規則|修改預算"
+                r"|更新關鍵字|更新規則|更新預算|調整預算|監視|盯梢"
+                r"|想買|想收|要買|要收|幫我買|幫我收|收購|徵求"
+                r"|\b(?:add_keyword|add_rule|track|subscribe|watch)\b)",
+                prompt_lower,
+            )
         )
-    )
+        if not has_verb:
+            return False
+
+    target_clean = str(target_arg or "").strip().lower()
+    if target_clean and not target_clean.lstrip("#").isdigit():
+        tokens = [
+            t.lstrip("-")
+            for t in re.split(r"[\s,，、/]+", target_clean)
+            if len(t.lstrip("-")) >= 2
+        ]
+        if tokens and not any(tok in prompt_lower for tok in tokens):
+            # Also check if resolved board alias appears in prompt_lower
+            resolved = resolve_board_alias(target_clean).lower()
+            if resolved not in prompt_lower:
+                return False
+
+    return True
 
 
 def _user_prompt_has_delete_intent(prompt: str) -> bool:
@@ -741,6 +779,15 @@ class GroqAgent:
             return False, board_name, msg
 
         if not self.storage.is_board_tracked(canonical):
+            allowed_ba, used_ba, limit_ba = self.storage.check_and_increment_usage(
+                subscriber_id, "board_add"
+            )
+            if not allowed_ba:
+                return (
+                    False,
+                    canonical,
+                    f"已達您今日可新增系統新看板的次數上限（{used_ba}/{limit_ba} 次）！",
+                )
             added = self.storage.add_board(canonical)
             if not added and not self.storage.is_board_tracked(canonical):
                 return (
@@ -773,22 +820,38 @@ class GroqAgent:
                 )
                 return deny_msg, json.dumps({"success": False, "error": deny_msg}, ensure_ascii=False), read_untrusted_ptt
 
-            # Prompt-Injection Guard (A4 & V-03)
+            # Prompt-Injection Guard (A4 & V-03 & Phase 2.2)
             if read_untrusted_ptt:
+                target_arg = (
+                    args.get("keyword")
+                    or args.get("new_keyword")
+                    or args.get("identifier")
+                    or args.get("board_name")
+                    or args.get("description")
+                    or ""
+                )
                 if name in DELETE_TOOLS_SET:
-                    if not _user_prompt_has_intent(user_prompt, name):
+                    if not _user_prompt_has_intent(user_prompt, name, str(target_arg)):
                         warn_msg = "[安全防護攔截] 偵測到讀取外部 PTT 文章後嘗試執行刪除操作，但使用者原始指令未包含刪除意圖。"
                         return warn_msg, json.dumps({"success": False, "error": warn_msg}, ensure_ascii=False), read_untrusted_ptt
                 elif name in WRITE_TOOLS_SET:
-                    if not _user_prompt_has_intent(user_prompt, name):
+                    if not _user_prompt_has_intent(user_prompt, name, str(target_arg)):
                         warn_msg = f"[安全防護攔截] 偵測到讀取外部 PTT 文章後嘗試執行寫入操作 (`{name}`)，但使用者原始指令未包含相應的設定意圖。"
                         return warn_msg, json.dumps({"success": False, "error": warn_msg}, ensure_ascii=False), read_untrusted_ptt
 
             if name == "find_ptt_boards":
                 query = str(args.get("query", "")).strip()
                 boards = await self.crawler.find_boards_by_query(query)
-                step_log = f"[搜尋看板] `{query}`（找到 {len(boards)} 個候選看板）"
-                return step_log, json.dumps({"matched_boards": boards}, ensure_ascii=False), read_untrusted_ptt
+                safe_boards = [
+                    {
+                        "name": b.get("name", ""),
+                        "zh_name": wrap_untrusted(b.get("zh_name", ""), max_len=120),
+                        "tags": wrap_untrusted(b.get("tags", ""), max_len=200),
+                    }
+                    for b in boards
+                ]
+                step_log = f"[搜尋看板] `{query}`（找到 {len(safe_boards)} 個候選看板）"
+                return step_log, json.dumps({"matched_boards": safe_boards}, ensure_ascii=False), read_untrusted_ptt
 
             elif name == "verify_and_add_board":
                 board_name = str(args.get("board_name", "")).strip()
@@ -998,17 +1061,17 @@ class GroqAgent:
                     det = it.get("detail", {})
                     compact_items.append(
                         {
-                            "title": f"<untrusted_ptt_content>{it['title']}</untrusted_ptt_content>",
+                            "title": wrap_untrusted(it.get("title", ""), max_len=200),
                             "url": it["url"],
-                            "author": it["author"],
+                            "author": wrap_untrusted(it.get("author", ""), max_len=60),
                             "date": it["date"],
                             "matched_keyword": it.get("matched_keyword"),
-                            "price": det.get("extracted_price") or "請見內文",
-                            "location": det.get("extracted_location") or "請見標題/內文",
+                            "price": wrap_untrusted(det.get("extracted_price") or "請見內文", max_len=120),
+                            "location": wrap_untrusted(det.get("extracted_location") or "請見標題/內文", max_len=120),
                             "buyer_queue_count": det.get("buyer_queue_count", 0),
                             "ai_summary_note": det.get("ai_summary_note") or "",
                             "ai_verified_by": det.get("ai_verified_by") or "",
-                            "snippet": f"<untrusted_ptt_content>{det.get('snippet', '')[:240]}</untrusted_ptt_content>",
+                            "snippet": wrap_untrusted(det.get("snippet", ""), max_len=240),
                         }
                     )
                 step_log = (
@@ -1045,11 +1108,11 @@ class GroqAgent:
 
                 compact_arts = [
                     {
-                        "title": f"<untrusted_ptt_content>{a['title']}</untrusted_ptt_content>",
+                        "title": wrap_untrusted(a.get("title", ""), max_len=200),
                         "url": a["url"],
-                        "author": a["author"],
+                        "author": wrap_untrusted(a.get("author", ""), max_len=60),
                         "date": a["date"],
-                        "category": a.get("category", ""),
+                        "category": wrap_untrusted(a.get("category", ""), max_len=30),
                         "nrec": a.get("nrec", "0"),
                     }
                     for a in arts[:25]
@@ -1081,14 +1144,20 @@ class GroqAgent:
                         {
                             "url": article_url,
                             "is_sold": detail["is_sold"],
-                            "sold_reason": detail["sold_reason"],
-                            "extracted_price": detail["extracted_price"],
-                            "extracted_location": detail["extracted_location"],
+                            "sold_reason": wrap_untrusted(detail.get("sold_reason") or "", max_len=120),
+                            "extracted_price": wrap_untrusted(detail.get("extracted_price") or "", max_len=120),
+                            "extracted_location": wrap_untrusted(detail.get("extracted_location") or "", max_len=120),
                             "post_time": detail["post_time"],
                             "buyer_queue_count": detail["buyer_queue_count"],
-                            "author_notes": detail["author_notes"],
-                            "recent_pushes": detail["recent_pushes"],
-                            "full_body": f"<untrusted_ptt_content>{detail['full_body'][:1100]}</untrusted_ptt_content>",
+                            "author_notes": [
+                                wrap_untrusted(n, max_len=200)
+                                for n in (detail.get("author_notes") or [])
+                            ],
+                            "recent_pushes": [
+                                wrap_untrusted(p, max_len=200)
+                                for p in (detail.get("recent_pushes") or [])
+                            ],
+                            "full_body": wrap_untrusted(detail.get("full_body") or "", max_len=1100),
                         },
                         ensure_ascii=False,
                     ),

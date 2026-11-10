@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Optional
 
 import discord
 
-from config import MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER
+from config import MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER, OWNER_USER_ID
 from embeds import (
     ArticleLinkView,
     build_article_embed,
     enforce_embed_limits,
     update_existing_embed_for_sold,
 )
-from ptt_crawler import PTTCrawler
+from ptt_crawler import CRAWL_P2_SOLD_CHECK, PTTCrawler
 from storage import BotStorage, compute_dedupe_hash
 
 logger = logging.getLogger("delivery")
@@ -83,6 +83,32 @@ class DiscordNotificationProvider(BaseNotificationProvider):
                         f"安全攔截：訂閱者 #{sub_id} (Guild {sub.get('discord_id')}) 的推播頻道 ({cid}) 不屬於該伺服器"
                     )
                     return None
+            elif scope == "user":
+                # Supplemental Rule #4: If a user routed personal notifications to a guild channel
+                # and later lost guild management permissions (or left the guild), stop pushing to that channel.
+                ch_guild = getattr(ch, "guild", None)
+                uid_str = str(sub.get("discord_id") or "")
+                if ch_guild is not None and uid_str.isdigit():
+                    if not (OWNER_USER_ID and uid_str == str(OWNER_USER_ID)):
+                        uid_int = int(uid_str)
+                        is_owner = getattr(ch_guild, "owner_id", None) == uid_int
+                        if not is_owner and hasattr(ch_guild, "get_member"):
+                            member = ch_guild.get_member(uid_int)
+                            if member is None:
+                                logger.warning(
+                                    f"安全攔截：個人訂閱者 #{sub_id} ({uid_str}) 已不在伺服器 {getattr(ch_guild, 'id', '')}，拒絕推播至頻道 ({cid})"
+                                )
+                                return None
+                            perms = getattr(member, "guild_permissions", None)
+                            if perms is not None and not (
+                                getattr(perms, "administrator", False)
+                                or getattr(perms, "manage_guild", False)
+                                or getattr(perms, "manage_channels", False)
+                            ):
+                                logger.warning(
+                                    f"安全攔截：個人訂閱者 #{sub_id} ({uid_str}) 於伺服器之管理權限已被收回，拒絕推播至頻道 ({cid})"
+                                )
+                                return None
             return ch
 
         if scope == "user":
@@ -541,6 +567,7 @@ class DeliveryManager:
                 article_title=sample.get("title", ""),
                 article_author=sample.get("author", ""),
                 force_refresh=True,
+                priority=CRAWL_P2_SOLD_CHECK,
             )
 
             fetch_status = base_detail.get("fetch_status", 200)
