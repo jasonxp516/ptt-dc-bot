@@ -1909,7 +1909,10 @@ class TestCICDReleaseWorkflow(BaseDeploymentTestCase):
         test_job = jobs["test"]
         self.assertEqual(test_job.get("runs-on"), "ubuntu-latest")
         test_steps_str = json.dumps(test_job.get("steps", []))
-        self.assertIn("unittest", test_steps_str, "Test job must execute python unittest suite")
+        # N6: the release gate must run the FULL pytest suite (unittest discover skipped 27
+        # pytest-style tests) plus the sold-classification benchmark
+        self.assertIn("pytest -q", test_steps_str, "Test job must execute the full pytest suite")
+        self.assertIn("eval_sold.py", test_steps_str, "Test job must run the sold benchmark")
         self.assertIn("bash -n", test_steps_str, "Test job must validate shell script syntax")
         self.assertIn("py_compile", test_steps_str, "Test job must validate python syntax via py_compile")
 

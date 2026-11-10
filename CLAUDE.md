@@ -37,8 +37,8 @@
 
 #### B. Telegram 平台 (`ENABLE_TELEGRAM=true` 時啟用)
 - `TELEGRAM_BOT_TOKEN`：向 Telegram [@BotFather](https://t.me/BotFather) 申請之 Bot Token（格式：`<bot_id>:<secret>`）。
-- `TELEGRAM_CHAT_ID`：預設推播目標 Chat ID（個人為正整數例如 `123456789`，群組為負整數例如 `-1001234567890`）。
-- `TELEGRAM_ADMIN_USER_ID`：管理員 User ID（選填）。
+- `TELEGRAM_CHAT_ID`：保留欄位，**目前程式未使用**（推播目標由使用者在該 Chat 執行 `/start`、`/keyword_add` 時自動建立訂閱者）。
+- `TELEGRAM_ADMIN_USER_ID`：可管理任何 Telegram 群組共用規則的 User ID（選填，逗號分隔多位）。群組內的寫入指令（`/keyword_add`、`/pause`、`/resume`、刪除按鈕）僅限此名單或該群組 creator/administrator。
 - **連線架構**：採用出站長輪詢（Long Polling `getUpdates`），**完全免公網 IP、免網域與免 SSL 憑證**，家用網路或防火牆後端皆可正常收發指令。
 
 #### C. Email SMTP 平台 (`ENABLE_EMAIL=true` 時啟用)
@@ -63,6 +63,7 @@
 - `DB_PATH`：SQLite 資料庫路徑（預設 `bot_data.db`，Docker 下為 `/app/data/bot_data.db`）。
 - `LOG_PATH`：日誌檔案路徑（預設 `bot.log`，5MB 輪替保留 3 份）。
 - `HEARTBEAT_FILE`：心跳檔案路徑（預設為資料庫同目錄下的 `heartbeat`，每輪巡檢更新 timestamp）。
+- `MAX_ARTICLE_AGE_HOURS`：未讀文章發文時間（取自網址 `M.<epoch>`）超過此時數即視為歷史文章、只標記已讀不推播（預設 `24`，`0` 停用）。同時是停機回補的上限。
 
 ---
 
@@ -88,7 +89,7 @@ ptt_dc_bot_release/
 ├── docs/                   # 模組化部署手冊 (deploy-docker, deploy-synology, deploy-unraid, deploy-linux)
 ├── PRIVACY.md              # 隱私權政策與 /forget_me 個人資料永久刪除說明
 ├── tools/eval_sold.py      # 售出判定基準評測工具 (搭配 tests/data/sold_labels.jsonl 80 筆樣本)
-└── tests/                  # 100% 離線 Mock 單元與整合測試套件 (250 tests + 20 subtests)
+└── tests/                  # 100% 離線 Mock 單元與整合測試套件 (282 tests + 20 subtests)
 ```
 
 ### 3.1 核心機制說明
@@ -119,7 +120,7 @@ ptt_dc_bot_release/
 ```bash
 /tmp/ptt_venv/bin/pytest -q
 ```
-*預期產出*：`250 passed, 20 subtests passed in ~1.8s`。
+*預期產出*：`282 passed, 20 subtests passed in ~2s`。
 
 ### 4.2 執行售出狀態機基準評測 (80 筆真實樣本)
 ```bash
@@ -155,6 +156,9 @@ All records classified correctly! (0 mismatches)
 
 # 測試心跳健康檢查與文件約束
 /tmp/ptt_venv/bin/pytest tests/test_phase4_health_docs.py -q
+
+# 2026-11 審查修正回歸測試 (巡檢主迴圈、權限、售出追蹤、備份、Telegram)
+/tmp/ptt_venv/bin/pytest tests/test_review_fixes.py -q
 ```
 
 ### 4.4 Docker 與服務檢查

@@ -25,3 +25,8 @@ __pycache__/
 .pytest_cache/
 tests/
 IMPLEMENTATION_GUIDE.md
+# Local-only material that must not be baked into images
+pre_release_verification/
+antigravity prompt.md
+docs/*.pdf
+docs/*.html
