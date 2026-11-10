@@ -8,7 +8,8 @@ tmux_console.log*
 venv/
 .venv/
 backups/
-data/
+/data/
+!tests/data/
 __pycache__/
 .pytest_cache/
 .DS_Store

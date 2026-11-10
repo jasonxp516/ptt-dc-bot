@@ -19,6 +19,11 @@ P2_BATCH_SCAN = 2
 P3_MAINTENANCE = 3
 
 
+class GroqBusyError(RuntimeError):
+    """Raised when the Groq scheduler queue is saturated or models are rate-limited past deadline."""
+    pass
+
+
 def parse_groq_duration(val: Optional[str]) -> float:
     """
     Parse Groq header duration strings such as '577ms', '2.5s', '1m26.4s', '1h2m3s' into seconds.
@@ -241,8 +246,30 @@ class GroqScheduler:
             est_tokens=est_tok,
             future=fut,
         )
+        max_q = self._queue.maxsize or 100
+        if priority >= P2_BATCH_SCAN and self._queue.qsize() >= int(max_q * 0.7):
+            raise GroqBusyError("系統 AI 排程佇列負載達 70%，已暫緩背景批次任務以保留互動資源。")
+
         if self._queue.full():
-            raise RuntimeError("系統 AI 排程佇列已滿（上限 100 任務），請稍後再試。")
+            if priority <= P1_REALTIME and hasattr(self._queue, "_queue") and self._queue._queue:
+                # Find the lowest-priority (highest priority integer, then highest seq) job in queue to evict
+                worst_idx = max(
+                    range(len(self._queue._queue)),
+                    key=lambda idx: (self._queue._queue[idx].priority, self._queue._queue[idx].seq),
+                )
+                evicted = self._queue._queue[worst_idx]
+                if evicted.priority > priority:
+                    del self._queue._queue[worst_idx]
+                    import heapq
+                    heapq.heapify(self._queue._queue)
+                    if not evicted.future.done():
+                        evicted.future.set_exception(
+                            GroqBusyError("系統 AI 排程佇列滿載，低優先級任務已被高優先級請求取代。")
+                        )
+                else:
+                    raise GroqBusyError("系統 AI 排程佇列已滿（上限 100 任務），請稍後再試。")
+            else:
+                raise GroqBusyError("系統 AI 排程佇列已滿（上限 100 任務），請稍後再試。")
         await self._queue.put(job)
         return await fut
 
@@ -280,46 +307,61 @@ class GroqScheduler:
         p_data = job.payload
         last_err = None
 
+        max_wait_budget = 30.0 if job.priority == P0_INTERACTIVE else 120.0
+        deadline = time.time() + max_wait_budget
+
         for attempt in range(2):
-            now = time.time()
             ready_models: List[str] = []
-            min_wait = 999.0
 
-            # Pass 1: prefer idle models (in_flight == 0)
-            for m in job.allowed_models:
-                bucket = self.buckets.get(m)
-                if not bucket:
-                    ready_models.append(m)
-                    continue
-                ok, wait_s = bucket.is_available_for(
-                    now, job.est_tokens, job.priority, allow_shared=False
-                )
-                if ok:
-                    ready_models.append(m)
-                else:
-                    min_wait = min(min_wait, wait_s)
+            while not ready_models:
+                now = time.time()
+                min_wait = 999.0
 
-            # Pass 2: if all models have in_flight >= 1, allow sharing a model with remaining token quota
-            if not ready_models:
+                # Pass 1: prefer idle models (in_flight == 0)
                 for m in job.allowed_models:
                     bucket = self.buckets.get(m)
-                    if bucket:
-                        ok, wait_s = bucket.is_available_for(
-                            now, job.est_tokens, job.priority, allow_shared=True
-                        )
-                        if ok:
-                            ready_models.append(m)
-                        else:
-                            min_wait = min(min_wait, wait_s)
+                    if not bucket:
+                        ready_models.append(m)
+                        continue
+                    ok, wait_s = bucket.is_available_for(
+                        now, job.est_tokens, job.priority, allow_shared=False
+                    )
+                    if ok:
+                        ready_models.append(m)
+                    else:
+                        min_wait = min(min_wait, wait_s)
 
-            if not ready_models:
-                sleep_dur = min(min_wait, 10.0 if job.priority == P0_INTERACTIVE else 20.0)
-                if sleep_dur > 0.1:
+                # Pass 2: if all models have in_flight >= 1, allow sharing a model with remaining token quota
+                if not ready_models:
+                    for m in job.allowed_models:
+                        bucket = self.buckets.get(m)
+                        if bucket:
+                            ok, wait_s = bucket.is_available_for(
+                                now, job.est_tokens, job.priority, allow_shared=True
+                            )
+                            if ok:
+                                ready_models.append(m)
+                            else:
+                                min_wait = min(min_wait, wait_s)
+
+                if ready_models:
+                    break
+
+                remaining_budget = deadline - now
+                if remaining_budget <= 0:
+                    raise GroqBusyError(
+                        f"所有 AI 模型目前皆處於額度冷卻或忙碌中 (已等待逾 {max_wait_budget:.0f}s)，請稍後再試。"
+                    )
+
+                step_cap = 5.0 if job.priority == P0_INTERACTIVE else 10.0
+                sleep_dur = min(min_wait, remaining_budget, step_cap)
+                if sleep_dur > 0.05:
                     logger.info(
                         f"[GroqScheduler] 所有模型額度恢復等待中，暫候 {sleep_dur:.1f}s (priority={job.priority})"
                     )
                     await asyncio.sleep(sleep_dur)
-                ready_models = list(job.allowed_models)
+                else:
+                    await asyncio.sleep(0.05)
 
             for model_name in ready_models:
                 bucket = self.buckets.get(model_name)
@@ -353,10 +395,16 @@ class GroqScheduler:
                             return data
 
                         if status == 429 and bucket:
+                            now_429 = time.time()
                             retry_after = parse_groq_duration(resp.headers.get("retry-after")) or 6.0
-                            bucket.cooldown_until = time.time() + min(retry_after, 60.0)
+                            if bucket.remaining_requests <= 0 or retry_after > 60.0:
+                                req_reset_wait = max(0.0, bucket.reset_requests_at - now_429)
+                                cd_sec = max(retry_after, req_reset_wait, 60.0)
+                            else:
+                                cd_sec = min(retry_after, 60.0)
+                            bucket.cooldown_until = now_429 + cd_sec
                             logger.warning(
-                                f"[GroqScheduler] {model_name} 觸發 429，冷卻 {retry_after:.1f}s，自動切換下一個模型"
+                                f"[GroqScheduler] {model_name} 觸發 429，冷卻 {cd_sec:.1f}s，自動切換下一個模型"
                             )
                         err_msg = data.get("error", {}).get("message", str(data))
                         last_err = f"HTTP {status} ({model_name}): {err_msg}"

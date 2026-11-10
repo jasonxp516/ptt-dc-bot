@@ -48,18 +48,94 @@ _MODEL_STRIP_PATTERNS = re.compile(
 )
 
 
+# Date / year patterns that must NOT be mistaken for prices (Phase 1.2)
+_DATE_YEAR_STRIP_PATTERNS = re.compile(
+    r"(?:"
+    r"\b(?:199\d|20[0-3]\d)\s*年(?:度|份|購|買|購入|出廠)?"
+    r"|\b(?:199\d|20[0-3]\d)\s*[/\-.]\s*\d{1,2}(?:\s*[/\-.]\s*\d{1,2})?\b"
+    r"|\b\d{1,2}\s*/\s*\d{1,2}\b"
+    r"|(?:保固|到期|出廠|購於|購買|購入|發票|至|到|產於|製造|年份)\s*[:：]?\s*(?:199\d|20[0-3]\d)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+_NEGOTIABLE_NO_PRICE_REGEX = re.compile(
+    r"(?:價格面議|面議|待議|站內議|來信報價|來信討論)",
+    re.IGNORECASE,
+)
+
+
+def parse_budget(value: Any) -> Optional[int]:
+    """
+    Phase 1.2 / 2.5: Parse a user or LLM budget parameter into an integer TWD amount.
+    Supports int, float (6500.0), '6500', '6,500', '6500元', 'NT$6,500', '$6500', '6.5k', '6.5K'.
+    Returns None if value is None or empty string.
+    Returns 0 if value explicitly represents 0 (used to clear budget in update_keyword).
+    Raises ValueError if value cannot be parsed or is out of valid range (100..500000).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"無效的預算型別: {value}")
+    if isinstance(value, (int, float)):
+        ival = int(round(float(value)))
+        if ival == 0:
+            return 0
+        if 100 <= ival <= 500000:
+            return ival
+        raise ValueError(f"預算金額超出合理範圍 (100 ~ 500,000 元): {value}")
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    # Normalize commas and currency wrappers
+    s_clean = s.replace(",", "").replace("，", "").strip()
+    if re.match(r"^(?:0|0\.0+)\s*(?:元|塊|ntd|twd|\$)?$", s_clean, re.IGNORECASE):
+        return 0
+
+    # Match k/K shorthand, e.g. '6.5k', 'NT$6.5K', '6.5k元'
+    m_k = re.match(
+        r"^(?:nt\$?|twd\$?|\$|約|預算|上限)?\s*(\d+(?:\.\d+)?)\s*[kK]\s*(?:元|塊|ntd|twd|以內|內)?$",
+        s_clean,
+        re.IGNORECASE,
+    )
+    if m_k:
+        ival = int(round(float(m_k.group(1)) * 1000))
+        if 100 <= ival <= 500000:
+            return ival
+        raise ValueError(f"預算金額超出合理範圍 (100 ~ 500,000 元): {value}")
+
+    # Match plain number or number with currency prefix/suffix, e.g. '6500.0', '6500元', 'NT$6500'
+    m_num = re.match(
+        r"^(?:nt\$?|twd\$?|\$|約|預算|上限)?\s*(\d+(?:\.\d+)?)\s*(?:元|塊|ntd|twd|以內|內)?$",
+        s_clean,
+        re.IGNORECASE,
+    )
+    if m_num:
+        ival = int(round(float(m_num.group(1))))
+        if ival == 0:
+            return 0
+        if 100 <= ival <= 500000:
+            return ival
+        raise ValueError(f"預算金額超出合理範圍 (100 ~ 500,000 元): {value}")
+
+    raise ValueError(f"無法解析預算參數 `{value}`，請輸入有效的整數金額（如 6500 或 6.5k）。")
+
+
 def extract_first_price_int(price_str: Optional[str]) -> Optional[int]:
     """
-    Fix P1-3: Accurately parse the item price in TWD from a price string without confusing
-    hardware model numbers (e.g. 'RTX 3060 12G 售 5800', 'i5-12400 + 3060Ti 共 15000', '5.8k')
-    for prices!
+    Fix P1-3 & Phase 1.2: Accurately parse the item price in TWD from a price string without
+    confusing hardware model numbers (e.g. 'RTX 3060 12G 售 5800', 'i5-12400 + 3060Ti 共 15000', '5.8k')
+    or dates/years (e.g. '保固至 2026/03 售 5800', '2025年購入 面交 6000元', '價格面議 2025') for prices!
     """
     if not price_str:
         return None
 
     s = price_str.replace(",", "").replace("，", "")
-    # 1. Strip hardware model tokens so 'RTX 3060' or 'i5-12400' cannot be matched as price
-    cleaned = _MODEL_STRIP_PATTERNS.sub(" ", s)
+    # 1. Strip date/year context first, then strip hardware model tokens
+    cleaned = _DATE_YEAR_STRIP_PATTERNS.sub(" ", s)
+    cleaned = _MODEL_STRIP_PATTERNS.sub(" ", cleaned)
 
     # 2. Check for explicit 'k' / 'K' price shorthand (e.g. '5.8k', '6k')
     m_k = re.search(r"(?<![A-Za-z0-9])(\d{1,2}(?:\.\d{1,2})?)\s*[kK](?![A-Za-z0-9])", cleaned)
@@ -97,7 +173,11 @@ def extract_first_price_int(price_str: Optional[str]) -> Optional[int]:
         except ValueError:
             pass
 
-    # 5. Fallback: find standalone 3~6 digit numbers not adjacent to letters or hyphens
+    # 5. Fallback: only accept an unambiguous single standalone number (never guess the last number
+    # among multiple numbers, and never treat isolated 1990-2035 year numbers in negotiable text as price)
+    if _NEGOTIABLE_NO_PRICE_REGEX.search(cleaned):
+        return None
+
     candidates = []
     for m in re.finditer(r"(?<![A-Za-z0-9\-_])(\d{3,6})(?![A-Za-z0-9\-_])", cleaned):
         try:
@@ -107,41 +187,16 @@ def extract_first_price_int(price_str: Optional[str]) -> Optional[int]:
         except ValueError:
             pass
 
-    if candidates:
-        return candidates[-1]
+    if len(candidates) == 1:
+        only_val = candidates[0]
+        # If it's in the 1990..2035 year range, only accept if the entire input string was just that number
+        if 1990 <= only_val <= 2035 and not re.match(r"^\s*\d{4}\s*$", s):
+            return None
+        return only_val
     return None
 
 
-def is_title_marked_sold(title: str) -> bool:
-    """
-    Fix P1-4: Detect sold/closed markers in article titles, including:
-    - '[賣/雙北/皆可] 售出 ASUS RTX3060Ti' (bare '售出' right after category bracket)
-    - '[賣/台中/皆可] （售出）微星 RX 6700 XT' (parenthesized '售出')
-    - '[賣/桃園/皆可] EVGA RTX 3060Ti FTW3 售出' (trailing '售出')
-    - Unambiguous strong sold markers (excluding '暫定' which means 'tentative price/location')
-    """
-    if not title:
-        return False
-    t = title.strip()
-    if re.search(
-        r"(已售出|已賣出|售出\s*感謝|全售出|皆售出|皆已售出|已全部售出|已售|"
-        r"暫售|停售|撤售|已結標|結標|取消販售|已交換|已徵得|"
-        r"已洽談|洽談中|洽中|已預定|已預訂|預定中|預訂中|"
-        r"不用再來信|不用來信|暫勿來信|請勿來信|勿來信|停止來信|暫不回信|恕不一一回信)",
-        t,
-        re.IGNORECASE,
-    ):
-        return True
-    # Bare '售出' / '賣出' inside parentheses/brackets, right after '[賣/...]', or at the end of title
-    if re.search(
-        r"(?:[（(\[【]\s*(?:售出|賣出|已售)\s*[）)\]】]"
-        r"|^\s*(?:Re:\s*|Fw:\s*)?\[[^\]]+\]\s*(?:售出|賣出)\b"
-        r"|(?:^|\s)(?:售出|賣出)\s*$)",
-        t,
-        re.IGNORECASE,
-    ):
-        return True
-    return False
+from sold_rules import is_title_marked_sold
 
 
 class BotStorage:

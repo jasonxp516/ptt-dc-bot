@@ -20,7 +20,7 @@ from ptt_crawler import (
     is_valid_ptt_article_url,
     resolve_board_alias,
 )
-from storage import BotStorage
+from storage import BotStorage, parse_budget
 
 logger = logging.getLogger("groq_agent")
 
@@ -850,11 +850,17 @@ class GroqAgent:
                     board = infer_board_from_query(f"{keyword} {user_prompt}", default_board="HardwareSale")
                 category = str(args.get("category", "賣")).strip() or "賣"
                 max_price_raw = args.get("max_price")
-                max_price = (
-                    int(max_price_raw)
-                    if max_price_raw is not None and str(max_price_raw).isdigit() and int(max_price_raw) > 0
-                    else None
-                )
+                try:
+                    parsed_mp = parse_budget(max_price_raw)
+                    max_price = parsed_mp if (parsed_mp is not None and parsed_mp > 0) else None
+                except ValueError as e:
+                    err_msg = str(e)
+                    step_log = f"[警告] 無法新增關鍵字 `{keyword}`：{err_msg}"
+                    return (
+                        step_log,
+                        json.dumps({"success": False, "error": err_msg}, ensure_ascii=False),
+                        read_untrusted_ptt,
+                    )
 
                 ok_b, canonical_board, err_b = await self._ensure_valid_board_for_rule(
                     board, subscriber_id
@@ -879,14 +885,20 @@ class GroqAgent:
                 new_kw = args.get("new_keyword")
                 new_kw_str = str(new_kw).strip() if new_kw else None
                 raw_mp = args.get("max_price")
-                if raw_mp is None:
+                if raw_mp is None or str(raw_mp).strip() == "":
                     mp_val = -1
-                elif str(raw_mp).isdigit() and int(raw_mp) == 0:
-                    mp_val = None
-                elif str(raw_mp).isdigit():
-                    mp_val = int(raw_mp)
                 else:
-                    mp_val = -1
+                    try:
+                        parsed_mp = parse_budget(raw_mp)
+                        mp_val = None if parsed_mp == 0 else parsed_mp
+                    except ValueError as e:
+                        err_msg = str(e)
+                        step_log = f"[警告] 無法修改關鍵字 `{identifier}`：{err_msg}"
+                        return (
+                            step_log,
+                            json.dumps({"success": False, "error": err_msg}, ensure_ascii=False),
+                            read_untrusted_ptt,
+                        )
                 ok, msg = self.storage.update_keyword(
                     identifier=identifier,
                     subscriber_id=subscriber_id,

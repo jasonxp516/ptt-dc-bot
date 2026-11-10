@@ -169,33 +169,35 @@ class DiscordNotificationProvider(BaseNotificationProvider):
                 break
 
         if overflow_slice and pushed > 0:
-            lines = []
-            for idx, it in enumerate(overflow_slice[:10], start=1):
-                art = it["article"]
-                det = it.get("detail") or {}
-                pr = det.get("extracted_price") or "見內文"
-                lines.append(f"**{idx}.** [{art['title'][:65]}]({art['url']}) — `{pr}`")
-            ov_embed = discord.Embed(
-                title=f"同時命中的其他新文章 ({len(overflow_slice)} 篇)",
-                description="\n".join(lines),
-                color=discord.Color.gold(),
-                timestamp=datetime.now(),
-            )
-            ov_embed.set_footer(text=f"{scope_label} | 防洗版摘要卡片")
-            try:
-                await target.send(
-                    embed=enforce_embed_limits(ov_embed),
-                    allowed_mentions=discord.AllowedMentions.none(),
+            for chunk_start in range(0, len(overflow_slice), 10):
+                chunk = overflow_slice[chunk_start : chunk_start + 10]
+                lines = []
+                for idx, it in enumerate(chunk, start=chunk_start + 1):
+                    art = it["article"]
+                    det = it.get("detail") or {}
+                    pr = det.get("extracted_price") or "見內文"
+                    lines.append(f"**{idx}.** [{art['title'][:65]}]({art['url']}) — `{pr}`")
+                ov_embed = discord.Embed(
+                    title=f"同時命中的其他新文章 ({len(overflow_slice)} 篇)",
+                    description="\n".join(lines),
+                    color=discord.Color.gold(),
+                    timestamp=datetime.now(),
                 )
-                for it in overflow_slice:
-                    self.storage.record_delivery(
-                        subscriber_id=sub_id,
-                        article=it["article"],
-                        channel_id=None,
-                        message_id=None,
+                ov_embed.set_footer(text=f"{scope_label} | 防洗版摘要卡片")
+                try:
+                    await target.send(
+                        embed=enforce_embed_limits(ov_embed),
+                        allowed_mentions=discord.AllowedMentions.none(),
                     )
-            except Exception:
-                pass
+                    for it in chunk:
+                        self.storage.record_delivery(
+                            subscriber_id=sub_id,
+                            article=it["article"],
+                            channel_id=None,
+                            message_id=None,
+                        )
+                except Exception:
+                    break
 
         return pushed
 

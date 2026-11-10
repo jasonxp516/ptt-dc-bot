@@ -403,7 +403,7 @@ class EmailNotificationProvider(BaseNotificationProvider):
             "",
         ]
         html_rows = []
-        for idx, it in enumerate(overflow_items[:15], start=1):
+        for idx, it in enumerate(overflow_items, start=1):
             art = it.get("article", {})
             det = it.get("detail") or {}
             pr = det.get("extracted_price") or "見內文"

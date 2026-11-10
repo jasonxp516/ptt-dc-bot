@@ -117,9 +117,17 @@ def build_article_embed(
     cat = article.get("category", "")
 
     if is_sold_update:
+        sold_state = (detail or {}).get("sold_state") or "SOLD"
         color = discord.Color.from_rgb(127, 140, 141)
-        display_title = f"[已售出] ~~{title[:210]}~~"
-        author_header = f"PTT 【{article['board']}】商品狀態更新（已售出或停止收信）"
+        if sold_state == "RESERVED":
+            display_title = f"[洽談中] {title[:210]}"
+            author_header = f"PTT 【{article['board']}】商品狀態更新（洽談中 / 預定中）"
+        elif sold_state == "NO_MAIL":
+            display_title = f"[暫勿來信] {title[:210]}"
+            author_header = f"PTT 【{article['board']}】商品狀態更新（暫停收信）"
+        else:
+            display_title = f"[已售出] ~~{title[:210]}~~"
+            author_header = f"PTT 【{article['board']}】商品狀態更新（已售出或停止收信）"
     else:
         display_title = title[:250]
         author_header = f"PTT 【{article['board']}】新上架通知（尚未售出）"
@@ -173,6 +181,12 @@ def build_article_embed(
             embed.add_field(
                 name="欲售價格",
                 value=f"**`{detail['extracted_price'][:80]}`**",
+                inline=True,
+            )
+        elif not is_sold_update:
+            embed.add_field(
+                name="欲售價格",
+                value="`價格請見內文`",
                 inline=True,
             )
         if detail.get("extracted_location"):

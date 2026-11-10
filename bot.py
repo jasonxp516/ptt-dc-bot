@@ -3025,7 +3025,7 @@ async def cmd_admin(
             f"[成功] 已將 `{tid}` 加入黑名單。", ephemeral=True
         )
     elif action == "unblacklist":
-        bot.storage.set_blacklist(tid, False)
+        bot.storage.remove_blacklist(tid)
         await interaction.response.send_message(
             f"[成功] 已將 `{tid}` 從黑名單移除。", ephemeral=True
         )

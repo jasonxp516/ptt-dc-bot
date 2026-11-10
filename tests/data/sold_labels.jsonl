@@ -1,0 +1,80 @@
+{"id": "case_001", "title": "[賣/台北] 3060Ti 可洽中壢站", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽中壢不應誤判"}
+{"id": "case_002", "title": "[賣/新北] 螢幕 中和面交", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含中和面交不應誤判"}
+{"id": "case_003", "title": "[賣/台北] 鍵盤 洽中山區", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽中山區不應誤判"}
+{"id": "case_004", "title": "[賣] ASUS XXX（原廠已停售款）", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "商品描述原廠停售款不應誤判"}
+{"id": "case_005", "title": "[賣] 相機 結標時間 11/20", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "拍賣結標時間不應誤判"}
+{"id": "case_006", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["尚未售出"], "expected_state": "AVAILABLE", "note": "否定詞尚未售出不應誤判為售出"}
+{"id": "case_007", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["還沒售出"], "expected_state": "AVAILABLE", "note": "否定詞還沒售出不應誤判為售出"}
+{"id": "case_008", "title": "[賣/台北] 3060Ti", "body_lines": ["請勿來信詢問是否還在，直接站內信"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "詢問交易方針請勿來信詢問不應誤判為NO_MAIL"}
+{"id": "case_009", "title": "[賣/台北] 3060Ti", "body_lines": ["請勿來信議價"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "議價政策請勿來信議價不應誤判為NO_MAIL"}
+{"id": "case_010", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["洽談中", "交易取消，恢復販售"], "expected_state": "AVAILABLE", "note": "推文序列重開恢復販售重設為AVAILABLE"}
+{"id": "case_011", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["暫售", "買家跑單，重新開賣"], "expected_state": "AVAILABLE", "note": "推文序列跑單重新開賣重設為AVAILABLE"}
+{"id": "case_012", "title": "[賣/新北] 羅技滑鼠 可洽中央大學", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽中央大學不應誤判"}
+{"id": "case_013", "title": "[賣/桃園] 電源供應器 洽中壢後站面交", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽中壢後站不應誤判"}
+{"id": "case_014", "title": "[賣/台中] 顯卡 可洽台中火車站", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽台中火車站不應誤判"}
+{"id": "case_015", "title": "[賣/台南] 筆電 洽中正路麥當勞", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "地點名含洽中正路不應誤判"}
+{"id": "case_016", "title": "[賣] 技嘉 3070（原廠停售型號，過保）", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "商品描述原廠停售型號不應誤判"}
+{"id": "case_017", "title": "[賣] 鐵三角耳機 原廠已停售", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "商品描述原廠已停售不應誤判"}
+{"id": "case_018", "title": "[賣] 競標主機 結標日期 12/01", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "競標結標日期不應誤判"}
+{"id": "case_019", "title": "[賣] 鏡頭 結標金額依推文為準", "body_lines": [], "author_pushes": [], "expected_state": "AVAILABLE", "note": "競標結標金額不應誤判"}
+{"id": "case_020", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["目前還未售出喔"], "expected_state": "AVAILABLE", "note": "否定詞還未售出不應誤判"}
+{"id": "case_021", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["並未售出"], "expected_state": "AVAILABLE", "note": "否定詞並未售出不應誤判"}
+{"id": "case_022", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["沒有售出，有興趣請站內"], "expected_state": "AVAILABLE", "note": "否定詞沒有售出不應誤判"}
+{"id": "case_023", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已洽談", "買家放鳥，重新販售"], "expected_state": "AVAILABLE", "note": "買家放鳥重新販售重設為AVAILABLE"}
+{"id": "case_024", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["預定中", "跑單繼續賣"], "expected_state": "AVAILABLE", "note": "跑單繼續賣重設為AVAILABLE"}
+{"id": "case_025", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["洽中", "爽約重開"], "expected_state": "AVAILABLE", "note": "爽約重開重設為AVAILABLE"}
+{"id": "case_026", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已預定", "還在，歡迎來信"], "expected_state": "AVAILABLE", "note": "還在重設為AVAILABLE"}
+{"id": "case_027", "title": "[賣/台北] 3060Ti", "body_lines": ["請勿來信殺價，底價不議"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "勿來信殺價不應誤判為NO_MAIL"}
+{"id": "case_028", "title": "[賣/台北] 3060Ti", "body_lines": ["勿來信砍價，感謝"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "勿來信砍價不應誤判為NO_MAIL"}
+{"id": "case_029", "title": "[賣/台北] 3060Ti", "body_lines": ["別來信大刀"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "別來信大刀不應誤判為NO_MAIL"}
+{"id": "case_030", "title": "[賣/台北] 3060Ti", "body_lines": ["請勿來信排隊，直接留電話"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "請勿來信排隊不應誤判為NO_MAIL"}
+{"id": "case_031", "title": "[賣/新竹] iPad Air 5 64G 玫瑰金", "body_lines": ["品況良好，盒裝配件完整", "售 13000 元"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "一般刊登正常販售中"}
+{"id": "case_032", "title": "[賣/雙北] iPhone 14 Pro 128G 黑", "body_lines": ["電池健康度 88%", "售 18500"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "一般刊登正常販售中"}
+{"id": "case_033", "title": "[賣/台中] 羅技 G913 TKL 白軸", "body_lines": ["功能正常，僅鍵帽微打油"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "一般刊登正常販售中"}
+{"id": "case_034", "title": "[賣/全台] Switch OLED 白主機 近全新", "body_lines": ["買來少玩，附保護貼"], "author_pushes": [], "expected_state": "AVAILABLE", "note": "一般刊登正常販售中"}
+{"id": "case_035", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["推文詢問請站內信"], "expected_state": "AVAILABLE", "note": "推文提示站內信正常流通"}
+{"id": "case_036", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["降價 500 繼續賣"], "expected_state": "AVAILABLE", "note": "推文降價繼續賣正常流通"}
+{"id": "case_037", "title": "[賣/台北] 3060Ti（已售出）", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題括號標註已售出"}
+{"id": "case_038", "title": "[賣/雙北/皆可] 售出 ASUS RTX3060Ti", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題開頭標註售出"}
+{"id": "case_039", "title": "[賣/台北] 技嘉 RTX 3060 12G 售出", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題末尾標註售出"}
+{"id": "case_040", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已售出，謝謝PTT"], "expected_state": "SOLD", "note": "推文標示已售出謝謝PTT"}
+{"id": "case_041", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["售出，感謝硬體版"], "expected_state": "SOLD", "note": "推文標示售出感謝硬體版"}
+{"id": "case_042", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["感謝MacShop版"], "expected_state": "SOLD", "note": "推文泛化感謝詞MacShop版"}
+{"id": "case_043", "title": "[賣/台北] 3060Ti", "body_lines": ["已全部售出"], "author_pushes": [], "expected_state": "SOLD", "note": "內文獨立行標示已全部售出"}
+{"id": "case_044", "title": "[賣] 撤售 iPhone 15", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題標示撤售"}
+{"id": "case_045", "title": "[賣/台中] 4070 Dual [售出]", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題半形中括號售出"}
+{"id": "case_046", "title": "[賣/全台] iPad Pro M2 【已售出】", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題全形黑括號已售出"}
+{"id": "case_047", "title": "[賣/高雄] PS5 光碟版 (已賣出)", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題圓括號已賣出"}
+{"id": "case_048", "title": "[賣/台南] 售出 索尼 A7M4 單機身", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題前綴售出"}
+{"id": "case_049", "title": "[賣/台北] 賣出 羅技 GPX 一代", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題前綴賣出"}
+{"id": "case_050", "title": "[賣/雙北] 3070Ti 全售出", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題末尾全售出"}
+{"id": "case_051", "title": "[賣/新竹] 多樣電腦零件 皆售出", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題末尾皆售出"}
+{"id": "case_052", "title": "[賣/桃園] 取消販售 DDR4 32G", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題前綴取消販售"}
+{"id": "case_053", "title": "[賣/全台] 已結標 螢幕架", "body_lines": [], "author_pushes": [], "expected_state": "SOLD", "note": "標題前綴已結標"}
+{"id": "case_054", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已售出 謝謝大家"], "expected_state": "SOLD", "note": "推文已售出謝謝大家"}
+{"id": "case_055", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["售出，感謝PPT"], "expected_state": "SOLD", "note": "推文售出感謝PPT"}
+{"id": "case_056", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已售出 感謝版友"], "expected_state": "SOLD", "note": "推文已售出感謝版友"}
+{"id": "case_057", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["皆已售出 謝謝"], "expected_state": "SOLD", "note": "推文皆已售出謝謝"}
+{"id": "case_058", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["售出，感謝HardwareSale板"], "expected_state": "SOLD", "note": "推文售出感謝HardwareSale板"}
+{"id": "case_059", "title": "[賣/台北] 3060Ti", "body_lines": ["已售出，感謝平台"], "author_pushes": [], "expected_state": "SOLD", "note": "內文獨立行已售出感謝平台"}
+{"id": "case_060", "title": "[賣/台北] 3060Ti", "body_lines": ["皆已售出，謝謝各位"], "author_pushes": [], "expected_state": "SOLD", "note": "內文獨立行皆已售出"}
+{"id": "case_061", "title": "[賣/台北] 3060Ti 洽中", "body_lines": [], "author_pushes": [], "expected_state": "RESERVED", "note": "標題末尾洽中"}
+{"id": "case_062", "title": "[賣/新竹] PS5 Pro (洽談中)", "body_lines": [], "author_pushes": [], "expected_state": "RESERVED", "note": "標題括號洽談中"}
+{"id": "case_063", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["預定中"], "expected_state": "RESERVED", "note": "推文預定中"}
+{"id": "case_064", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["暫售"], "expected_state": "RESERVED", "note": "推文暫售"}
+{"id": "case_065", "title": "[賣/台中] 4080 Super [洽中]", "body_lines": [], "author_pushes": [], "expected_state": "RESERVED", "note": "標題中括號洽中"}
+{"id": "case_066", "title": "[賣/全台] 洽談中 iPhone 15 Pro", "body_lines": [], "author_pushes": [], "expected_state": "RESERVED", "note": "標題前綴洽談中"}
+{"id": "case_067", "title": "[賣/雙北] 3060 12G 暫售", "body_lines": [], "author_pushes": [], "expected_state": "RESERVED", "note": "標題末尾暫售"}
+{"id": "case_068", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已洽談"], "expected_state": "RESERVED", "note": "推文已洽談"}
+{"id": "case_069", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["已預定"], "expected_state": "RESERVED", "note": "推文已預定"}
+{"id": "case_070", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["預訂中"], "expected_state": "RESERVED", "note": "推文預訂中"}
+{"id": "case_071", "title": "[賣/台北] 3060Ti", "body_lines": ["暫售"], "author_pushes": [], "expected_state": "RESERVED", "note": "內文獨立行暫售"}
+{"id": "case_072", "title": "[賣/台北] RTX 4070 (暫勿來信)", "body_lines": [], "author_pushes": [], "expected_state": "NO_MAIL", "note": "標題括號暫勿來信"}
+{"id": "case_073", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["來信眾多，暫不回信"], "expected_state": "NO_MAIL", "note": "推文來信眾多暫不回信"}
+{"id": "case_074", "title": "[賣/台北] 3060Ti", "body_lines": ["不用再來信"], "author_pushes": [], "expected_state": "NO_MAIL", "note": "內文獨立行不用再來信"}
+{"id": "case_075", "title": "[賣/雙北] 4090 猛禽 [不用來信]", "body_lines": [], "author_pushes": [], "expected_state": "NO_MAIL", "note": "標題括號不用來信"}
+{"id": "case_076", "title": "[賣/全台] 暫勿來信 Sony A7C2", "body_lines": [], "author_pushes": [], "expected_state": "NO_MAIL", "note": "標題前綴暫勿來信"}
+{"id": "case_077", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["信件過多，恕不一一回信"], "expected_state": "NO_MAIL", "note": "推文信件過多恕不一一回信"}
+{"id": "case_078", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["暫不回信"], "expected_state": "NO_MAIL", "note": "推文暫不回信"}
+{"id": "case_079", "title": "[賣/台北] 3060Ti", "body_lines": [], "author_pushes": ["停止來信"], "expected_state": "NO_MAIL", "note": "推文停止來信"}
+{"id": "case_080", "title": "[賣/台北] 3060Ti", "body_lines": ["暫勿來信，信箱已爆"], "author_pushes": [], "expected_state": "NO_MAIL", "note": "內文獨立行暫勿來信"}

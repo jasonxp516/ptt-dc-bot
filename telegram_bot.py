@@ -364,30 +364,33 @@ class TelegramNotificationProvider(BaseNotificationProvider):
 
         # 處理溢出防洗版摘要卡片
         if overflow_slice and pushed > 0:
-            lines = [f"<b>同時命中的其他新文章 ({len(overflow_slice)} 篇)</b>\n"]
-            for idx, it in enumerate(overflow_slice[:10], start=1):
-                art = it["article"]
-                det = it.get("detail") or {}
-                pr = escape_tg(det.get("extracted_price") or "見內文")
-                t_esc = escape_tg(art["title"][:50])
-                u_esc = escape_tg(art["url"])
-                lines.append(f'{idx}. <a href="{u_esc}">{t_esc}</a> — <code>{pr}</code>')
+            for chunk_start in range(0, len(overflow_slice), 10):
+                chunk = overflow_slice[chunk_start : chunk_start + 10]
+                lines = [f"<b>同時命中的其他新文章 ({len(overflow_slice)} 篇)</b>\n"]
+                for idx, it in enumerate(chunk, start=chunk_start + 1):
+                    art = it["article"]
+                    det = it.get("detail") or {}
+                    pr = escape_tg(det.get("extracted_price") or "見內文")
+                    t_esc = escape_tg(art["title"][:50])
+                    u_esc = escape_tg(art["url"])
+                    lines.append(f'{idx}. <a href="{u_esc}">{t_esc}</a> — <code>{pr}</code>')
 
-            summary_text = "\n".join(lines)
-            try:
-                await self.api.send_message(
-                    chat_id=chat_id, text=summary_text, parse_mode="HTML"
-                )
-                if self.storage and sub_id is not None:
-                    for it in overflow_slice:
-                        self.storage.record_delivery(
-                            subscriber_id=sub_id,
-                            article=it["article"],
-                            channel_id=str(chat_id),
-                            message_id=None,
-                        )
-            except Exception as e:
-                logger.debug(f"發送 Telegram 溢出卡片失敗: {e}")
+                summary_text = "\n".join(lines)
+                try:
+                    await self.api.send_message(
+                        chat_id=chat_id, text=summary_text, parse_mode="HTML"
+                    )
+                    if self.storage and sub_id is not None:
+                        for it in chunk:
+                            self.storage.record_delivery(
+                                subscriber_id=sub_id,
+                                article=it["article"],
+                                channel_id=str(chat_id),
+                                message_id=None,
+                            )
+                except Exception as e:
+                    logger.debug(f"發送 Telegram 溢出卡片失敗: {e}")
+                    break
 
         return pushed
 

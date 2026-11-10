@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 import random
 import re
@@ -9,6 +10,24 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import aiohttp
 from bs4 import BeautifulSoup
+
+from sold_rules import (
+    AUTHOR_PUSH_SOLD_REGEX,
+    AVAILABLE,
+    LIST_ITEM_MARKER_REGEX,
+    NO_MAIL,
+    RESERVED,
+    SOLD,
+    STRONG_SOLD_REGEX,
+    TITLE_SOLD_REGEX,
+    classify_author_pushes,
+    classify_text_state,
+    classify_title_state,
+    is_title_sold,
+    line_matches_item_token,
+    normalize_nfkc,
+    pick_item_token,
+)
 
 logger = logging.getLogger("ptt_crawler")
 
@@ -428,37 +447,6 @@ def infer_board_from_query(text: str, default_board: str = "HardwareSale") -> st
 
     return default_board
 
-# Fix B5 & P1-4: Split sold markers into STRONG (unambiguous, immediate exclude, without '暫定') vs TITLE_SOLD_REGEX
-STRONG_SOLD_REGEX = re.compile(
-    r"(已售出|已賣出|售出\s*感謝|全售出|皆售出|皆已售出|已全部售出|已售|"
-    r"暫售|停售|撤售|已結標|結標|取消販售|已交換|已徵得|"
-    r"已洽談|洽談中|洽中|已預定|已預訂|預定中|預訂中|"
-    r"不用再來信|不用來信|暫勿來信|請勿來信|勿來信|停止來信|暫不回信|恕不一一回信)",
-    re.IGNORECASE,
-)
-
-TITLE_SOLD_REGEX = re.compile(
-    r"(?:[（(\[【]\s*(?:售出|賣出|已售)\s*[）)\]】]"
-    r"|^\s*(?:Re:\s*|Fw:\s*)?\[[^\]]+\]\s*(?:售出|賣出)\b"
-    r"|(?:^|\s)(?:售出|賣出)\s*$)",
-    re.IGNORECASE,
-)
-
-# Author push comment sold markers (if the original author comments "售出" or "謝謝PTT" after posting, it's closed)
-AUTHOR_PUSH_SOLD_REGEX = re.compile(
-    r"(已售出|售出|已售|暫售|停售|撤售|已結標|結標|已賣出|已洽談|洽談中|洽中|"
-    r"已預定|已預訂|預定中|預訂中|不用再來信|不用來信|暫勿來信|請勿來信|勿來信|"
-    r"停止來信|暫不回信|恕不一一回信|謝謝PTT|謝謝PPT|感謝硬體版|感謝HS版)",
-    re.IGNORECASE,
-)
-
-
-def is_title_sold(title: str) -> bool:
-    if not title:
-        return False
-    return bool(STRONG_SOLD_REGEX.search(title) or TITLE_SOLD_REGEX.search(title))
-
-
 VALID_BOARD_NAME_REGEX = re.compile(r"^[A-Za-z0-9_\-]{1,32}$")
 VALID_PTT_ARTICLE_URL_REGEX = re.compile(
     r"^https://www\.ptt\.cc/bbs/[A-Za-z0-9_\-]{1,32}/M\.\d+\.A\.[A-Za-z0-9]{1,8}\.html$"
@@ -481,23 +469,28 @@ def _token_matches_title_safe(token: str, title_lower: str, title_compact: str) 
 
 def apply_keyword_view(base_detail: Dict, target_keyword: str = "") -> Dict:
     """
-    Fix P1-1: Derive a keyword-specific view from a keyword-agnostic `base_detail` dict
-    without mutating the cached object!
-    - Filters `raw_price_lines` to the line matching `target_keyword` in multi-item posts.
-    - Evaluates whether `target_keyword`'s specific item line is marked sold, or whether
-      non-numbered head/tail lines mark the entire post sold.
+    Fix P1-1 & Phase 1.3: Derive a keyword-specific view from a keyword-agnostic `base_detail` dict
+    without mutating the cached object (deep copy of list fields)!
+    - Selects the primary item token via `pick_item_token(pos_tokens)` independent of token order.
+    - Respects digit boundaries and `-exclusion` tokens (`neg_tokens`) when matching item/price lines.
+    - Normalizes fullwidth list markers (`１．`, `①`) via NFKC and uses unified `LIST_ITEM_MARKER_REGEX`.
     """
-    view = dict(base_detail)
-    raw_price_lines = list(base_detail.get("raw_price_lines") or [])
-    body_lines = (base_detail.get("body_only") or base_detail.get("full_body") or "").splitlines()
+    view = copy.deepcopy(base_detail)
+    if "sold_state" not in view:
+        view["sold_state"] = SOLD if view.get("is_sold") else AVAILABLE
 
-    pos_tokens = [t for t in (target_keyword or "").lower().split() if t and not t.startswith("-")]
-    kw_compact = re.sub(r"[\s\-_]+", "", pos_tokens[-1]) if pos_tokens else ""
+    raw_price_lines = list(view.get("raw_price_lines") or [])
+    body_lines = (view.get("body_only") or view.get("full_body") or "").splitlines()
+
+    raw_tokens = [t for t in normalize_nfkc(target_keyword or "").lower().split() if t]
+    pos_tokens = [t for t in raw_tokens if not t.startswith("-")]
+    neg_tokens = [t[1:] for t in raw_tokens if t.startswith("-") and len(t) > 1]
+    item_token = pick_item_token(pos_tokens)
 
     if raw_price_lines:
-        if kw_compact and len(raw_price_lines) > 1:
+        if item_token and len(raw_price_lines) > 1:
             matched_p_lines = [
-                pl for pl in raw_price_lines if kw_compact in re.sub(r"[\s\-_]+", "", pl.lower())
+                pl for pl in raw_price_lines if line_matches_item_token(pl, item_token, neg_tokens)
             ]
             if matched_p_lines:
                 view["extracted_price"] = " / ".join(matched_p_lines)[:100]
@@ -509,42 +502,72 @@ def apply_keyword_view(base_detail: Dict, target_keyword: str = "") -> Dict:
     if view.get("is_sold"):
         return view
 
-    # Check head/tail lines: if a numbered item line is for a DIFFERENT keyword (or we are building the base view), skip it!
+    # Check head/tail lines: if a numbered/bulleted item line is for a DIFFERENT keyword (or we are building the base view), skip it!
     if body_lines:
         head_tail = body_lines[:3] + body_lines[-4:]
         for ln in head_tail:
-            if STRONG_SOLD_REGEX.search(ln):
-                if re.match(r"^\s*(?:\d+[\.\)、]|\([1-9]\)|【[1-9]】)", ln):
-                    if not kw_compact:
-                        continue
-                    ln_comp = re.sub(r"[\s\-_]+", "", ln.lower())
-                    if kw_compact not in ln_comp:
-                        continue
+            ln_nfkc = normalize_nfkc(ln)
+            is_list_item = bool(LIST_ITEM_MARKER_REGEX.match(ln_nfkc))
+            if is_list_item:
+                if not item_token:
+                    continue
+                if not line_matches_item_token(ln, item_token, neg_tokens):
+                    continue
+                st, _ = classify_text_state(ln, require_short_or_boundary=False)
+            else:
+                st, _ = classify_text_state(ln, require_short_or_boundary=True)
+
+            if st != AVAILABLE:
                 view["is_sold"] = True
+                view["sold_state"] = st
                 view["sold_reason"] = f"內文標示：{ln[:45]}"
                 return view
 
-    if not kw_compact:
-        if view.get("extracted_price") and STRONG_SOLD_REGEX.search(view["extracted_price"]):
+    if not item_token:
+        if view.get("extracted_price"):
             # Only mark global sold if there is a single price line or all price lines are sold
-            if len(raw_price_lines) <= 1 or all(STRONG_SOLD_REGEX.search(pl) for pl in raw_price_lines):
-                view["is_sold"] = True
-                view["sold_reason"] = f"價格欄標示：{view['extracted_price'][:45]}"
+            if len(raw_price_lines) <= 1:
+                st, _ = classify_text_state(view["extracted_price"], require_short_or_boundary=False)
+                if st != AVAILABLE:
+                    view["is_sold"] = True
+                    view["sold_state"] = st
+                    view["sold_reason"] = f"價格欄標示：{view['extracted_price'][:45]}"
+            else:
+                line_states = [
+                    classify_text_state(pl, require_short_or_boundary=False)[0]
+                    for pl in raw_price_lines
+                ]
+                if line_states and all(s != AVAILABLE for s in line_states):
+                    view["is_sold"] = True
+                    view["sold_state"] = line_states[0]
+                    view["sold_reason"] = f"價格欄標示：{view['extracted_price'][:45]}"
         return view
 
-    # Keyword-specific line window check
+    # Also check matched price lines for item-specific sold markers
+    if raw_price_lines:
+        for pl in raw_price_lines:
+            if line_matches_item_token(pl, item_token, neg_tokens):
+                st, _ = classify_text_state(pl, require_short_or_boundary=False)
+                if st != AVAILABLE:
+                    view["is_sold"] = True
+                    view["sold_state"] = st
+                    view["sold_reason"] = f"品項價格標示：{pl[:50]}"
+                    return view
+
+    # Keyword-specific line window check in body
     for idx, ln in enumerate(body_lines):
-        ln_compact = re.sub(r"[\s\-_]+", "", ln.lower())
-        if kw_compact in ln_compact:
+        if line_matches_item_token(ln, item_token, neg_tokens):
             # If this is a numbered list item, only inspect this line (and non-numbered continuation lines)
             window_lines = [ln]
             for next_ln in body_lines[idx + 1 : idx + 3]:
-                if re.match(r"^(?:\d+[\.\)、]|\([1-9]\)|【[1-9]】|◎)", next_ln):
+                if LIST_ITEM_MARKER_REGEX.match(normalize_nfkc(next_ln)):
                     break
                 window_lines.append(next_ln)
             window = " | ".join(window_lines)
-            if STRONG_SOLD_REGEX.search(window):
+            st, _ = classify_text_state(window, require_short_or_boundary=False)
+            if st != AVAILABLE:
                 view["is_sold"] = True
+                view["sold_state"] = st
                 view["sold_reason"] = f"品項旁標示：{window[:50]}"
                 return view
 
@@ -1007,6 +1030,7 @@ class PTTCrawler:
             "extracted_price": None,
             "extracted_location": None,
             "is_sold": False,
+            "sold_state": AVAILABLE,
             "sold_reason": None,
             "buyer_queue_count": 0,
             "author_notes": [],
@@ -1014,9 +1038,12 @@ class PTTCrawler:
             "ai_verified_by": None,
         }
 
-        if article_title and is_title_sold(article_title):
-            result["is_sold"] = True
-            result["sold_reason"] = f"標題標示：{article_title[:45]}"
+        if article_title:
+            t_state, t_reason = classify_title_state(article_title)
+            if t_state != AVAILABLE:
+                result["is_sold"] = True
+                result["sold_state"] = t_state
+                result["sold_reason"] = t_reason
 
         try:
             soup = BeautifulSoup(html, "lxml")
@@ -1035,16 +1062,19 @@ class PTTCrawler:
                         result["post_time"] = v_txt
                     elif "標題" in t_txt and not article_title:
                         article_title = v_txt
-                        if is_title_sold(article_title):
+                        t_state, t_reason = classify_title_state(article_title)
+                        if t_state != AVAILABLE:
                             result["is_sold"] = True
-                            result["sold_reason"] = f"標題標示：{article_title[:45]}"
+                            result["sold_state"] = t_state
+                            result["sold_reason"] = t_reason
                     elif "作者" in t_txt and not article_author:
                         article_author = v_txt.split("(")[0].strip()
                 meta.decompose()
 
-            # 2. Inspect structured div.push elements before decomposing
+            # 2. Inspect structured div.push elements before decomposing (in chronological DOM order)
             author_id_clean = article_author.split("(")[0].strip().lower() if article_author else ""
             buyer_queue_users = set()
+            dom_author_pushes: List[str] = []
 
             for push in main_content.select("div.push"):
                 uid_el = push.select_one("span.push-userid")
@@ -1057,10 +1087,7 @@ class PTTCrawler:
                 content = cnt_el.get_text(strip=True).lstrip(": ").strip()
 
                 if author_id_clean and uid.lower() == author_id_clean:
-                    result["author_notes"].append(content)
-                    if AUTHOR_PUSH_SOLD_REGEX.search(content):
-                        result["is_sold"] = True
-                        result["sold_reason"] = f"作者於推文標示：{content}"
+                    dom_author_pushes.append(content)
                 else:
                     result["recent_pushes"].append(f"{uid}: {content}")
                     if re.search(r"(排|收|已私|站內|私訊|已信|寄信|全收|已匯款)", content):
@@ -1099,11 +1126,8 @@ class PTTCrawler:
                             r"\s*\d+\.\d+\.\d+\.\d+\s+\d{2}/\d{2}\s+\d{2}:\d{2}\s*$", "", p_cnt
                         ).strip()
                         if author_id_clean and p_uid.lower() == author_id_clean:
-                            if p_cnt_clean not in result["author_notes"]:
+                            if p_cnt_clean not in result["author_notes"] and p_cnt_clean not in dom_author_pushes:
                                 result["author_notes"].append(p_cnt_clean)
-                            if AUTHOR_PUSH_SOLD_REGEX.search(p_cnt_clean):
-                                result["is_sold"] = True
-                                result["sold_reason"] = f"作者於推文標示：{p_cnt_clean}"
                         else:
                             entry = f"{p_uid}: {p_cnt_clean}"
                             if entry not in result["recent_pushes"]:
@@ -1112,9 +1136,17 @@ class PTTCrawler:
                                 buyer_queue_users.add(p_uid.lower())
                     else:
                         result["author_notes"].append(s_ln)
-                        if STRONG_SOLD_REGEX.search(s_ln):
-                            result["is_sold"] = True
-                            result["sold_reason"] = f"作者於文末補充：{s_ln[:45]}"
+
+            # Append structured DOM pushes after post-signature supplements so chronological order is preserved
+            result["author_notes"].extend(dom_author_pushes)
+
+            # Evaluate all author notes/pushes chronologically (supports reopen override)
+            if result["author_notes"]:
+                push_state, push_reason = classify_author_pushes(result["author_notes"])
+                if push_state != AVAILABLE:
+                    result["is_sold"] = True
+                    result["sold_state"] = push_state
+                    result["sold_reason"] = push_reason
 
             result["buyer_queue_count"] = len(buyer_queue_users)
             result["recent_pushes"] = result["recent_pushes"][-10:]
@@ -1199,13 +1231,21 @@ class PTTCrawler:
             # Global (keyword-agnostic) body sold marker check: only standalone full-post sold lines
             if not result["is_sold"]:
                 for ln in lines:
-                    if re.search(
-                        r"^(?:已售出|售出|暫售|全售出|皆售出|皆已售出|已全部售出|停售|撤售|已洽談|洽談中|洽中|不用再來信|不用來信)\b",
+                    if LIST_ITEM_MARKER_REGEX.match(normalize_nfkc(ln)):
+                        continue
+                    if re.match(
+                        r"^(?:已售出|售出|暫售|全售出|皆售出|皆已售出|已全部售出|撤售|已洽談|洽談中|"
+                        r"洽中(?![壢山和正區路街站醫央興原華信安港投園清友科工學])|"
+                        r"不用再來信|不用來信|暫勿來信)\s*(?:[，,。!！\-/｜|].*)?$",
                         ln,
+                        re.IGNORECASE,
                     ):
-                        result["is_sold"] = True
-                        result["sold_reason"] = f"內文標示：{ln[:45]}"
-                        break
+                        st, _ = classify_text_state(ln, require_short_or_boundary=True)
+                        if st != AVAILABLE:
+                            result["is_sold"] = True
+                            result["sold_state"] = st
+                            result["sold_reason"] = f"內文標示：{ln[:45]}"
+                            break
 
             # Cache the pure keyword-agnostic result BEFORE applying any target_keyword view (Fix P1-1)
             if self.storage is not None and article_url:
