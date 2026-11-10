@@ -1,6 +1,7 @@
 import glob
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -25,7 +26,9 @@ from config import (
     TIER_QUOTAS,
     sanitize_user_input,
 )
-from timeutil import now_tpe_str, today_tpe_str
+from timeutil import now_tpe, now_tpe_str, today_tpe_str
+
+logger = logging.getLogger("storage")
 
 _USAGE_KIND_MAP = {
     "ai": ("daily_ai_chats", 20),
@@ -204,7 +207,27 @@ def extract_first_price_int(price_str: Optional[str]) -> Optional[int]:
     return None
 
 
-from sold_rules import is_title_marked_sold
+from sold_rules import is_title_marked_sold, pick_item_token
+
+
+def price_for_budget_check(detail: Optional[Dict]) -> Optional[int]:
+    """
+    F16: Price used when comparing a keyword view against a subscriber's max_price budget.
+    - Normal view: first parsed price of the (item-specific) extracted price string.
+    - Ambiguous multi-item view (target item has no dedicated price line): use the LOWEST
+      parsed price among all lines, so a post is only filtered when every listed price is over
+      budget. The first line may belong to a different, cheaper item and must not be treated
+      as this item's confirmed price.
+    """
+    if not detail:
+        return None
+    if detail.get("price_ambiguous"):
+        prices = [extract_first_price_int(pl) for pl in (detail.get("raw_price_lines") or [])]
+        valid = [p for p in prices if p is not None]
+        return min(valid) if valid else None
+    return extract_first_price_int(detail.get("extracted_price"))
+
+
 
 
 class BotStorage:
@@ -344,7 +367,7 @@ class BotStorage:
                 self._conn.commit()
 
     def _run_schema_v2_migration(self, cur: sqlite3.Cursor) -> None:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
 
         # 1. Subscribers table
         cur.execute(
@@ -749,7 +772,7 @@ class BotStorage:
             return row is not None
 
     def set_blacklist(self, discord_id: str, reason: str = "違反使用規範") -> None:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
         with self._lock:
             self._conn.execute(
                 "INSERT INTO blacklist (discord_id, reason, created_at) VALUES (?, ?, ?) "
@@ -870,7 +893,7 @@ class BotStorage:
                     row = self._conn.execute("SELECT * FROM subscribers WHERE id = ?", (row["id"],)).fetchone()
                 return dict(row), False
 
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now_str = now_tpe_str()
             tier = "free"
             if (scope == "guild" and discord_id == self.default_guild_id) or (
                 OWNER_USER_ID and discord_id == OWNER_USER_ID
@@ -943,7 +966,7 @@ class BotStorage:
             did = f"{plat}_{tid}" if tid else str(time.time_ns())
 
         pch = str(push_channel_id) if push_channel_id is not None else (tid if norm_scope == "guild" and plat == "discord" else None)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
 
         with self._lock:
             # 檢查是否已存在
@@ -1031,6 +1054,35 @@ class BotStorage:
                 (1 if enabled else 0, subscriber_id),
             )
             self._conn.commit()
+            if enabled:
+                self.ensure_boards_for_subscriber(subscriber_id)
+
+    def ensure_boards_for_subscriber(self, subscriber_id: int) -> List[str]:
+        """
+        F11: Re-register any board referenced by this subscriber's rules that is missing from the
+        global `boards` table (e.g. pruned by an older version while the subscriber was paused).
+        Boards were verified when the rules were created, so they are re-added without a probe.
+        Returns the list of boards re-added.
+        """
+        restored: List[str] = []
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT DISTINCT board FROM keywords WHERE subscriber_id = ?
+                UNION
+                SELECT DISTINCT board FROM fuzzy_rules WHERE subscriber_id = ?
+                """,
+                (subscriber_id, subscriber_id),
+            ).fetchall()
+            for r in rows:
+                b = (r["board"] or "").strip()
+                if not b or b.upper() == "ALL" or self.is_board_tracked(b):
+                    continue
+                if self.add_board(b):
+                    restored.append(b)
+                else:
+                    logger.warning(f"恢復訂閱者 #{subscriber_id} 之看板 {b} 失敗（全域看板名額已滿）")
+        return restored
 
     def update_subscriber_channel(
         self, subscriber_id: int, channel_id: Optional[str], reset_dm_failed: bool = True
@@ -1230,6 +1282,34 @@ class BotStorage:
             ).fetchone()
             return row is not None
 
+    def is_board_initialized(self, board_name: str) -> bool:
+        """True when the board is tracked AND its seen-article baseline has already been built."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT initialized FROM boards WHERE name = ? COLLATE NOCASE", (board_name,)
+            ).fetchone()
+            return bool(row and row["initialized"])
+
+    def has_any_rules_for_board(self, board_name: str) -> bool:
+        """
+        F11: True when ANY subscriber (enabled or paused) still references the board. Used for
+        board deletion/pruning decisions so pausing never loses a board registration; scanning
+        decisions keep using `has_active_rules_for_board` (enabled subscribers only).
+        """
+        with self._lock:
+            if self._conn.execute(
+                "SELECT 1 FROM subscribers WHERE push_mode = 'all' LIMIT 1"
+            ).fetchone():
+                return True
+            for table in ("keywords", "fuzzy_rules"):
+                row = self._conn.execute(
+                    f"SELECT 1 FROM {table} WHERE board = 'ALL' OR board = ? COLLATE NOCASE LIMIT 1",
+                    (board_name,),
+                ).fetchone()
+                if row:
+                    return True
+            return False
+
     def has_active_rules_for_board(self, board_name: str) -> bool:
         with self._lock:
             r_all = self._conn.execute(
@@ -1280,7 +1360,7 @@ class BotStorage:
                 b_name = b["name"]
                 if b_name.lower() == self.default_board.lower():
                     continue
-                if self.has_active_rules_for_board(b_name):
+                if self.has_any_rules_for_board(b_name):
                     continue
                 if min_idle_seconds > 0:
                     last_scan = int(b.get("last_scanned_at") or 0)
@@ -1289,7 +1369,8 @@ class BotStorage:
                     if last_scan == 0 and b.get("added_at"):
                         try:
                             added_dt = datetime.strptime(b["added_at"], "%Y-%m-%d %H:%M:%S")
-                            if (datetime.now() - added_dt).total_seconds() < min_idle_seconds:
+                            now_naive_tpe = now_tpe().replace(tzinfo=None)
+                            if (now_naive_tpe - added_dt).total_seconds() < min_idle_seconds:
                                 continue
                         except Exception:
                             pass
@@ -1350,7 +1431,7 @@ class BotStorage:
         - Otherwise (e.g. cooldown): Updates `last_checked` and `last_status` while preserving `initialized`.
         Returns current `consecutive_failures` count.
         """
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
         now_ts = int(time.time())
         with self._lock:
             if scanned_now:
@@ -1467,7 +1548,7 @@ class BotStorage:
                         f"系統全域盯梢看板名額已滿（上限 `{MAX_GLOBAL_ACTIVE_BOARDS}` 個），無法新增看板 `{board}`！",
                     )
 
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
         with self._lock:
             try:
                 self._conn.execute(
@@ -1632,7 +1713,8 @@ class BotStorage:
                         "id": kw["id"],
                         "subscriber_id": kw["subscriber_id"],
                         "keyword": kw["keyword"],
-                        "primary_token": pos_tokens[-1],
+                        # F16: order-independent item token (e.g. '3060 台北' and '台北 3060' -> '3060')
+                        "primary_token": pick_item_token(pos_tokens) or pos_tokens[-1],
                         "pos_query": " ".join(pos_tokens),
                         "max_price": kw.get("max_price"),
                         "category": kw["category"],
@@ -1709,7 +1791,7 @@ class BotStorage:
                         "error": f"系統全域盯梢看板名額已滿（上限 `{MAX_GLOBAL_ACTIVE_BOARDS}` 個），無法新增看板 `{board}`！"
                     }
 
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = now_tpe_str()
         with self._lock:
             cur = self._conn.execute(
                 """
@@ -2007,6 +2089,16 @@ class BotStorage:
                 )
             self._conn.commit()
 
+    def set_delivery_state(self, delivery_id: int, sold_state: str) -> None:
+        """F15: record a non-final card state (RESERVED / NO_MAIL / AVAILABLE) without closing follow-up."""
+        now_ts = int(time.time())
+        with self._lock:
+            self._conn.execute(
+                "UPDATE deliveries SET sold_state = ?, last_sold_check_at = ? WHERE id = ?",
+                (str(sold_state or ""), now_ts, int(delivery_id)),
+            )
+            self._conn.commit()
+
     def mark_delivery_sold(self, url_or_id: Any, sold_state: str = "SOLD") -> None:
         now_ts = int(time.time())
         state_val = str(sold_state or "SOLD")
@@ -2141,26 +2233,50 @@ class BotStorage:
         P3-9 & V-07: Perform WAL checkpoint (TRUNCATE) and create an atomic daily rotating backup in `backups/`
         (retaining the latest 7 daily backups) using conn.backup().
         """
-        day_tag = datetime.now().strftime("%Y%m%d")
+        # N7: day boundary in Asia/Taipei regardless of host TZ
+        day_tag = now_tpe().strftime("%Y%m%d")
         last_maint = self.get_setting("last_maintenance_day", "")
         if last_maint == day_tag:
+            return None
+        # F04: after a failed attempt, retry at most every 30 minutes (this runs every poll cycle)
+        if time.time() < getattr(self, "_next_backup_retry_ts", 0.0):
             return None
 
         if backup_dir is None:
             backup_dir = os.path.join(os.path.dirname(self.db_path), "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        dest_path = os.path.join(backup_dir, f"bot_data_{day_tag}.db")
+        dest_path: Optional[str] = os.path.join(backup_dir, f"bot_data_{day_tag}.db")
 
         with self._lock:
             try:
                 self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"WAL checkpoint 失敗: {e}")
             try:
-                self.backup_database_atomic(dest_path)
-            except Exception:
-                dest_path = None
+                os.makedirs(backup_dir, exist_ok=True)
+                tmp_path = f"{dest_path}.tmp"
+                self.backup_database_atomic(tmp_path)
+                # Verify the copy is readable before it replaces anything
+                chk = sqlite3.connect(tmp_path)
+                try:
+                    ok_row = chk.execute("PRAGMA quick_check;").fetchone()
+                    chk.execute("SELECT COUNT(*) FROM subscribers").fetchone()
+                finally:
+                    chk.close()
+                if not ok_row or str(ok_row[0]).lower() != "ok":
+                    raise RuntimeError(f"備份檔完整性檢查失敗: {ok_row}")
+                os.replace(tmp_path, dest_path)
+            except Exception as e:
+                # F04: do NOT record today's maintenance as done; keep previous backups intact
+                logger.error(f"每日資料庫備份失敗，30 分鐘後重試: {e}")
+                self._next_backup_retry_ts = time.time() + 1800
+                try:
+                    if os.path.exists(f"{dest_path}.tmp"):
+                        os.remove(f"{dest_path}.tmp")
+                except Exception:
+                    pass
+                return None
             self.set_setting("last_maintenance_day", day_tag)
+            self._next_backup_retry_ts = 0.0
 
         # Retain latest 7 backups
         try:

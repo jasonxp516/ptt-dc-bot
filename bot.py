@@ -37,6 +37,7 @@ from config import (
     GROQ_FAST_MODEL,
     GROQ_MODEL,
     LOG_PATH,
+    MAX_ARTICLE_AGE_HOURS,
     MAX_GLOBAL_ACTIVE_BOARDS,
     OWNER_USER_ID,
     POLL_MAX,
@@ -56,11 +57,12 @@ from ptt_crawler import (
     COMMON_BOARDS_MAP,
     PTT_BOARD_DIRECTORY,
     PTTCrawler,
+    article_post_ts,
     infer_board_from_query,
     is_valid_board_name,
     resolve_board_alias,
 )
-from storage import BotStorage, extract_first_price_int
+from storage import BotStorage, extract_first_price_int, price_for_budget_check
 
 # Enforce secure umask for all created database and log files (V-02 / CWE-732 mitigation)
 try:
@@ -86,6 +88,10 @@ def is_interactive() -> bool:
 
 # Setup Rotating File Logging (C1 & P1-6: max 5MB x 3 backups; only attach StreamHandler on interactive TTY or Docker)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# F02: bounded per-cycle back-paging and processing batch for each board
+BACKFILL_MAX_PAGES = 5
+MAX_NEW_ARTICLES_PER_CYCLE = 20
 _log_dir = os.path.dirname(os.path.abspath(LOG_PATH))
 if _log_dir:
     os.makedirs(_log_dir, exist_ok=True)
@@ -214,6 +220,19 @@ class PTTDiscordBot(discord.Client):
         self._last_manual_check_ts: float = 0.0
         self._last_board_alert_ts: Dict[str, float] = {}
         self.detected_owner_id: str = str(OWNER_USER_ID or "")
+
+    def _backfill_reached_known_point(self, articles: List[Dict[str, Any]]) -> bool:
+        """F02: stop paging once the fetched window contains a seen article or a stale one."""
+        if not articles:
+            return False
+        if len(self.storage.filter_unseen_articles(articles)) < len(articles):
+            return True
+        if MAX_ARTICLE_AGE_HOURS > 0:
+            cutoff = int(time.time()) - MAX_ARTICLE_AGE_HOURS * 3600
+            oldest_ts = article_post_ts(articles[0].get("url", ""))
+            if oldest_ts is not None and oldest_ts < cutoff:
+                return True
+        return False
 
     def _write_heartbeat(self) -> None:
         hb_path = os.getenv("HEARTBEAT_FILE", "").strip()
@@ -695,11 +714,20 @@ class PTTDiscordBot(discord.Client):
                     )
                     continue
 
-                ok, articles, status_msg = await self.crawler.fetch_board_articles(
-                    board_name,
-                    fetch_prev_if_few=(not needs_reinit),
-                    max_pages=1,
-                )
+                # F02: For initialized boards, page back (bounded) until we reach an article we have
+                # already seen or one older than MAX_ARTICLE_AGE_HOURS, so downtime or bursts spanning
+                # more than one index page are backfilled instead of silently skipped.
+                if needs_reinit:
+                    ok, articles, status_msg = await self.crawler.fetch_board_articles(
+                        board_name, fetch_prev_if_few=False, max_pages=1
+                    )
+                else:
+                    ok, articles, status_msg = await self.crawler.fetch_board_articles(
+                        board_name,
+                        fetch_prev_if_few=True,
+                        max_pages=BACKFILL_MAX_PAGES,
+                        stop_when=self._backfill_reached_known_point,
+                    )
                 summary["checked_boards"] += 1
 
                 if not ok:
@@ -735,22 +763,43 @@ class PTTDiscordBot(discord.Client):
                     continue
 
                 new_articles = self.storage.filter_unseen_articles(articles)
+
+                # N1: Unseen but stale articles (e.g. old index-page posts on low-traffic boards
+                # whose seen record was purged by the 14-day cleanup) are history, not new posts.
+                if new_articles and MAX_ARTICLE_AGE_HOURS > 0:
+                    age_cutoff = int(time.time()) - MAX_ARTICLE_AGE_HOURS * 3600
+                    stale = [
+                        a for a in new_articles
+                        if (article_post_ts(a.get("url", "")) or age_cutoff) < age_cutoff
+                    ]
+                    if stale:
+                        self.storage.mark_articles_seen(stale)
+                        stale_urls = {a["url"] for a in stale}
+                        new_articles = [a for a in new_articles if a["url"] not in stale_urls]
+                        logger.info(
+                            f"看板 {board_name} 略過 {len(stale)} 篇發文超過 {MAX_ARTICLE_AGE_HOURS} 小時之未讀舊文"
+                        )
+
                 if not new_articles:
                     self.storage.update_board_status(
                         board_name, True, "正常盯梢中 (無新文章)", scanned_now=True
                     )
                     continue
 
-                if len(new_articles) > 20:
+                if len(new_articles) > MAX_NEW_ARTICLES_PER_CYCLE:
+                    # F02: Process the OLDEST batch first and leave the rest unseen for the next
+                    # cycle (they are newer than what we mark seen, so the bounded back-paging
+                    # above still reaches them). Never mark unprocessed articles as seen.
                     logger.info(
-                        f"看板 {board_name} 單輪新文章達 {len(new_articles)} 篇，僅處理最新 20 篇以防洪水推播"
+                        f"看板 {board_name} 單輪新文章達 {len(new_articles)} 篇，本輪先處理較舊的 "
+                        f"{MAX_NEW_ARTICLES_PER_CYCLE} 篇，其餘留待下輪"
                     )
-                    self.storage.mark_articles_seen(new_articles[:-20])
-                    new_articles = new_articles[-20:]
+                    new_articles = new_articles[:MAX_NEW_ARTICLES_PER_CYCLE]
                 summary["new_articles"] += len(new_articles)
 
                 board_fuzzy_rules = self.storage.get_fuzzy_rules(board=board_name)
                 per_sub_queue: Dict[int, List[Dict[str, Any]]] = {}
+                fuzzy_retry_urls: set = set()
                 matched_articles_count = 0
                 evaluated_articles: List[Dict[str, Any]] = []
 
@@ -797,18 +846,22 @@ class PTTDiscordBot(discord.Client):
                         "category", ""
                     )
 
-                    # Fix P1-2: Evaluate each unique primary_token independently
+                    # Fix P1-2 / F16: Evaluate each distinct keyword view independently. The view is
+                    # derived from the FULL keyword (same string later stored as matched_keyword for
+                    # sold follow-up), so token order and shared trailing tokens (e.g. '3060 台北'
+                    # vs '1060 台北') can no longer pick the wrong item or share a wrong result.
                     token_eval: Dict[str, Tuple[bool, Dict[str, Any]]] = {}
                     for kh in kw_hits:
-                        tok = kh["primary_token"]
-                        if tok in token_eval:
+                        tok = kh["keyword"]
+                        tok_key = tok.lower()
+                        if tok_key in token_eval:
                             continue
                         tok_detail = PTTCrawler.apply_keyword_view(base_detail, tok)
                         if tok_detail.get("is_sold") and is_selling_post:
                             logger.info(
                                 f"略過已售出/洽中文章 [{tok}]: [{board_name}] {art['title']} ({tok_detail.get('sold_reason')})"
                             )
-                            token_eval[tok] = (False, tok_detail)
+                            token_eval[tok_key] = (False, tok_detail)
                             continue
 
                         if is_selling_post:
@@ -819,32 +872,32 @@ class PTTDiscordBot(discord.Client):
                                 logger.info(
                                     f"略過 AI 語意判定不可買文章 [{tok}] ({ai_check.get('model')}): [{board_name}] {art['title']} -> {ai_check.get('reason')}"
                                 )
-                                token_eval[tok] = (False, tok_detail)
+                                token_eval[tok_key] = (False, tok_detail)
                                 continue
                             if ai_check.get("target_price"):
                                 tok_detail["extracted_price"] = ai_check["target_price"]
+                                tok_detail.pop("price_ambiguous", None)
                             if ai_check.get("model"):
                                 tok_detail["ai_verified_by"] = ai_check["model"]
                             note = ai_check.get("summary_note") or ai_check.get("reason")
                             if note:
                                 tok_detail["ai_summary_note"] = note
 
-                        token_eval[tok] = (True, tok_detail)
+                        token_eval[tok_key] = (True, tok_detail)
 
                     sub_kw_labels: Dict[int, List[str]] = {}
                     sub_primary_kw: Dict[int, str] = {}
                     sub_best_detail: Dict[int, Dict[str, Any]] = {}
                     for kh in kw_hits:
-                        tok = kh["primary_token"]
-                        avail, tok_detail = token_eval.get(tok, (False, base_detail))
+                        avail, tok_detail = token_eval.get(
+                            kh["keyword"].lower(), (False, base_detail)
+                        )
                         if not avail:
                             continue
                         sid = kh["subscriber_id"]
                         max_p = kh.get("max_price")
                         if max_p is not None:
-                            extracted_price_int = extract_first_price_int(
-                                tok_detail.get("extracted_price")
-                            )
+                            extracted_price_int = price_for_budget_check(tok_detail)
                             if (
                                 extracted_price_int is not None
                                 and extracted_price_int > int(max_p)
@@ -858,9 +911,20 @@ class PTTDiscordBot(discord.Client):
                     fuzzy_hits_all: List[Dict[str, Any]] = []
                     whole_post_sold = bool(base_detail.get("is_sold") and is_selling_post)
                     if applicable_fuzzy and not whole_post_sold:
-                        fuzzy_hits_all = await self.agent.evaluate_article_fuzzy_rules(
-                            art, base_detail, applicable_fuzzy
+                        fuzzy_hits_all, fuzzy_complete = (
+                            await self.agent.evaluate_article_fuzzy_rules_ex(
+                                art, base_detail, applicable_fuzzy
+                            )
                         )
+                        if not fuzzy_complete:
+                            # F03: AI unavailable (429 / timeout). Deliver what is certain now
+                            # (keyword hits), but keep the article unseen so fuzzy rules are
+                            # retried next cycle; per-subscriber URL dedupe prevents re-sending
+                            # what was already delivered. Bounded by MAX_ARTICLE_AGE_HOURS.
+                            logger.warning(
+                                f"看板 {board_name} 模糊規則 AI 判斷未完成，文章保留於下輪重試: {art['url']}"
+                            )
+                            fuzzy_retry_urls.add(art["url"])
 
                     sub_fuzzy_map: Dict[int, List[Dict[str, Any]]] = {}
                     for fh in fuzzy_hits_all:
@@ -904,6 +968,10 @@ class PTTDiscordBot(discord.Client):
                     )
                     summary["pushed"] += pushed_cnt
 
+                if fuzzy_retry_urls:
+                    evaluated_articles = [
+                        a for a in evaluated_articles if a["url"] not in fuzzy_retry_urls
+                    ]
                 if evaluated_articles:
                     self.storage.mark_articles_seen(evaluated_articles)
 
@@ -2572,7 +2640,7 @@ async def cmd_board_remove(
         if fz["board"].lower() == board.lower():
             bot.storage.remove_fuzzy_rule(str(fz["id"]), subscriber_id=sub["id"])
 
-    if not bot.storage.has_active_rules_for_board(board):
+    if not bot.storage.has_any_rules_for_board(board):
         removed = bot.storage.remove_board(board)
         if not removed:
             await interaction.response.send_message(
@@ -2997,11 +3065,10 @@ async def cmd_admin(
     target_id: Optional[str] = None,
     tier: str = "friend",
 ):
-    is_authorized = is_bot_owner(interaction.user.id) or (
-        interaction.guild is not None
-        and str(interaction.guild.id) == str(DEFAULT_GUILD_ID)
-        and has_guild_write_permission(interaction.user, interaction.guild)
-    )
+    # F09: System-wide operations (all subscribers, tiers, blacklist) are restricted to the bot
+    # owner (OWNER_USER_ID or the auto-detected home-guild owner). Channel/guild managers of the
+    # home guild only manage their own guild-scoped rules, not the whole system.
+    is_authorized = is_bot_owner(interaction.user.id)
     if not is_authorized:
         await interaction.response.send_message(
             "[權限不足] 此指令僅限系統管理員執行。", ephemeral=True

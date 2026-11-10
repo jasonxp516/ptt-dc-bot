@@ -69,6 +69,15 @@ def is_valid_ptt_article_url(url: str) -> bool:
     return bool(url and VALID_PTT_ARTICLE_URL_REGEX.match(url.strip()))
 
 
+_PTT_URL_TS_REGEX = re.compile(r"/M\.(\d{9,11})\.A\.")
+
+
+def article_post_ts(url: str) -> Optional[int]:
+    """N1: Extract the post Unix timestamp encoded in a PTT article URL (M.<epoch>.A.xxx.html)."""
+    m = _PTT_URL_TS_REGEX.search(url or "")
+    return int(m.group(1)) if m else None
+
+
 def _token_matches_title_safe(token: str, title_lower: str, title_compact: str) -> bool:
     if token.isdigit():
         return bool(re.search(rf"(?<!\d){re.escape(token)}(?!\d)", title_lower))
@@ -102,8 +111,13 @@ def apply_keyword_view(base_detail: Dict, target_keyword: str = "") -> Dict:
             ]
             if matched_p_lines:
                 view["extracted_price"] = " / ".join(matched_p_lines)[:100]
+                view.pop("price_ambiguous", None)
             else:
+                # F16: the target item has no dedicated price line in a multi-item post; the
+                # joined price string must not be read as this item's price (first price may
+                # belong to another item). Flag it so budget checks can treat it conservatively.
                 view["extracted_price"] = " / ".join(raw_price_lines)[:100]
+                view["price_ambiguous"] = True
         else:
             view["extracted_price"] = " / ".join(raw_price_lines)[:100]
 
@@ -240,8 +254,22 @@ class PTTCrawler:
             return
         ev = asyncio.Event()
         self._wait_seq += 1
-        heapq.heappush(self._wait_heap, (int(priority), self._wait_seq, ev))
-        await ev.wait()
+        entry = (int(priority), self._wait_seq, ev)
+        heapq.heappush(self._wait_heap, entry)
+        try:
+            await ev.wait()
+        except asyncio.CancelledError:
+            # F08: a cancelled waiter must never keep (or be handed) the slot.
+            if ev.is_set():
+                # Slot was already handed to us during cancellation: pass it on.
+                self._release_priority_slot()
+            else:
+                try:
+                    self._wait_heap.remove(entry)
+                    heapq.heapify(self._wait_heap)
+                except ValueError:
+                    pass
+            raise
 
     def _release_priority_slot(self) -> None:
         while self._wait_heap:
@@ -534,8 +562,17 @@ class PTTCrawler:
         return articles, prev_url
 
     async def fetch_board_articles(
-        self, board: str, fetch_prev_if_few: bool = True, max_pages: int = 1
+        self,
+        board: str,
+        fetch_prev_if_few: bool = True,
+        max_pages: int = 1,
+        stop_when: Optional[Callable[[List[Dict]], bool]] = None,
     ) -> Tuple[bool, List[Dict], str]:
+        """
+        Fetch the board index page and optionally older pages.
+        `stop_when(articles_so_far)` (F02): evaluated before fetching each additional page; when it
+        returns True, paging stops early (e.g. once a previously seen article is reached).
+        """
         index_url = f"{self.BASE_URL}/bbs/{board}/index.html"
         status, html = await self._safe_get(index_url)
         if status != 200 or not html:
@@ -551,6 +588,13 @@ class PTTCrawler:
         curr_prev = prev_url
         referer = index_url
         while pages_to_fetch > 0 and curr_prev:
+            if stop_when is not None:
+                try:
+                    if stop_when(all_articles):
+                        break
+                except Exception as e:
+                    logger.debug(f"stop_when 判斷失敗，停止翻頁: {e}")
+                    break
             p_status, p_html = await self._safe_get(curr_prev, referer=referer)
             if p_status != 200 or not p_html:
                 break

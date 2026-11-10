@@ -19,6 +19,9 @@ from storage import BotStorage, compute_dedupe_hash
 
 logger = logging.getLogger("delivery")
 
+# F15: states that may still change within the follow-up window (not final like SOLD / DELETED)
+TEMPORARY_STATES = ("RESERVED", "NO_MAIL")
+
 
 class BaseNotificationProvider(abc.ABC):
     """
@@ -237,6 +240,38 @@ class DiscordNotificationProvider(BaseNotificationProvider):
 
         return pushed
 
+    async def _resolve_delivery_channel(
+        self, subscriber: Dict[str, Any], channel_id: int
+    ) -> Optional[discord.abc.Messageable]:
+        """
+        F12: Resolve the channel a card was ORIGINALLY delivered to (from the delivery record),
+        not the subscriber's current push channel, so changing /setup never orphans old cards.
+        - discord.NotFound / Forbidden propagate (caller marks edit_failed: permanent).
+        - Other errors return None (transient; caller retries later).
+        """
+        ch = self.bot.get_channel(channel_id)
+        if ch is None:
+            # DM channels are often not cached; the subscriber's DM channel may match
+            if subscriber.get("scope") == "user" and not subscriber.get("push_channel_id"):
+                dm = await self.resolve_target(subscriber)
+                if dm is not None and getattr(dm, "id", None) == channel_id:
+                    return dm
+            try:
+                ch = await self.bot.fetch_channel(channel_id)
+            except (discord.NotFound, discord.Forbidden):
+                raise
+            except Exception as e:
+                logger.debug(f"暫時無法取得原推播頻道 ({channel_id}): {e}")
+                return None
+        if subscriber.get("scope", "guild") == "guild":
+            ch_guild = getattr(ch, "guild", None)
+            if ch_guild is None or str(ch_guild.id) != str(subscriber.get("discord_id", "")):
+                logger.warning(
+                    f"安全攔截：投遞紀錄頻道 ({channel_id}) 不屬於訂閱者 #{subscriber.get('id')} 之伺服器"
+                )
+                return None
+        return ch
+
     async def update_sold(
         self,
         subscriber: Dict[str, Any],
@@ -249,7 +284,7 @@ class DiscordNotificationProvider(BaseNotificationProvider):
             return False
 
         try:
-            target = await self.resolve_target(subscriber)
+            target = await self._resolve_delivery_channel(subscriber, int(ch_id))
             if target is None:
                 return False
             msg = await target.fetch_message(int(msg_id))
@@ -594,28 +629,54 @@ class DeliveryManager:
                     kw = d_row.get("matched_keyword") or ""
                     item_detail = PTTCrawler.apply_keyword_view(base_detail, kw)
 
-                if not item_detail.get("is_sold") and not item_detail.get("deleted"):
-                    self.storage.touch_delivery_sold_check(target_ref)
-                    continue
+                prev_state = str(d_row.get("sold_state") or "").upper()
+                is_closed = bool(item_detail.get("is_sold") or item_detail.get("deleted"))
 
-                state_to_save = (
-                    item_detail.get("sold_state")
-                    or ("DELETED" if is_deleted_404 else "SOLD")
-                )
+                if not is_closed:
+                    # F15: a temporarily held item (RESERVED / NO_MAIL) is back on sale -> restore card
+                    if prev_state in TEMPORARY_STATES:
+                        new_state = "AVAILABLE"
+                        item_detail = dict(item_detail)
+                        item_detail["sold_state"] = "AVAILABLE"
+                        item_detail["is_sold"] = False
+                    else:
+                        self.storage.touch_delivery_sold_check(target_ref)
+                        continue
+                else:
+                    new_state = (
+                        item_detail.get("sold_state")
+                        or ("DELETED" if is_deleted_404 else "SOLD")
+                    )
+                    if new_state == prev_state:
+                        # Already shown in this temporary state; keep watching for a final outcome
+                        self.storage.touch_delivery_sold_check(target_ref)
+                        continue
+
+                # F15: only SOLD / DELETED are final; temporary states keep the 18h follow-up alive
+                is_final = new_state not in TEMPORARY_STATES and new_state != "AVAILABLE"
+
+                def _save_state() -> None:
+                    if is_final:
+                        self.storage.mark_delivery_sold(target_ref, sold_state=new_state)
+                    elif isinstance(target_ref, int):
+                        self.storage.set_delivery_state(target_ref, new_state)
+                    else:
+                        self.storage.touch_delivery_sold_check(target_ref)
+
                 sub = self.storage.get_subscriber_by_id(d_row["subscriber_id"])
                 if not sub:
-                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
+                    self.storage.mark_delivery_sold(target_ref, sold_state=new_state)
                     continue
 
                 platform = str(sub.get("platform") or "discord").lower().strip()
                 if platform == "email":
-                    # Supplemental Rule #3: Email is non-editable (N/A); mark sold without error or retry
-                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
+                    # Supplemental Rule #3: Email is non-editable (N/A); record state without retry
+                    _save_state()
                     continue
 
                 ok = await self.dispatcher.dispatch_sold_update(sub, d_row, item_detail)
                 if ok:
-                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
+                    _save_state()
                     updated_count += 1
                 else:
                     self.storage.touch_delivery_sold_check(target_ref)

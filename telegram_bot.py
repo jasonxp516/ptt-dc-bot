@@ -11,13 +11,16 @@ PTT 智慧追蹤機器人 - Telegram 機器人與推播通知模組 (telegram_bo
 import asyncio
 import html
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 
+import time
+
+from boards import COMMON_BOARDS_MAP, resolve_board_alias
 from config import MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER
 from delivery import BaseNotificationProvider
-from storage import BotStorage
+from storage import BotStorage, parse_budget
 
 logger = logging.getLogger("telegram_bot")
 
@@ -61,7 +64,24 @@ class TelegramAPIClient:
         while retry_count <= max_retries:
             try:
                 async with session.post(url, json=payload or {}) as resp:
-                    data = await resp.json(content_type=None)
+                    try:
+                        data = await resp.json(content_type=None)
+                    except ValueError:
+                        # N5: non-JSON body (e.g. 502 HTML from an upstream proxy) is transient
+                        data = None
+                    if not isinstance(data, dict):
+                        logger.warning(
+                            f"[警告] Telegram API 回應非 JSON ({method}, HTTP {resp.status})，稍後重試"
+                        )
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            await asyncio.sleep(2.0 * retry_count)
+                            continue
+                        return {
+                            "ok": False,
+                            "error_code": resp.status or 502,
+                            "description": "Non-JSON response",
+                        }
 
                     # 1. 成功回傳
                     if resp.status == 200 and data.get("ok"):
@@ -126,9 +146,10 @@ class TelegramAPIClient:
         payload: Dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
-            "parse_mode": parse_mode,
             "disable_web_page_preview": disable_web_page_preview,
         }
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
         if reply_markup:
             payload["reply_markup"] = reply_markup
         return await self.request("sendMessage", payload)
@@ -161,6 +182,13 @@ class TelegramAPIClient:
         if text:
             payload["text"] = text
         return await self.request("answerCallbackQuery", payload)
+
+    async def get_chat_member(
+        self, chat_id: Union[int, str], user_id: Union[int, str]
+    ) -> Dict[str, Any]:
+        return await self.request(
+            "getChatMember", {"chat_id": chat_id, "user_id": user_id}, max_retries=1
+        )
 
     async def set_my_commands(self, commands: List[Dict[str, str]]) -> bool:
         data = await self.request("setMyCommands", {"commands": commands})
@@ -233,24 +261,126 @@ def format_article_card(
     if ai_note:
         lines.append(f"<i>[AI 摘要] {escape_tg(ai_note)}</i>")
 
-    # 內文摘要處理
-    snippet = detail.get("content_snippet") or detail.get("snippet") or ""
-    if snippet:
-        clean_snippet = escape_tg(snippet.strip())
-        lines.append(f"\n<b>內文重點摘錄</b>:\n<blockquote>{clean_snippet}</blockquote>")
-
     card_text = "\n".join(lines)
 
-    # 4,000 字元安全截斷保證
-    if len(card_text) > 4000:
-        read_more = f'\n... <a href="{escape_tg(url)}">[點此閱讀全文]</a>'
-        cutoff_limit = 4000 - len(read_more) - 20
-        card_text = card_text[:cutoff_limit]
-        if "<blockquote>" in card_text and "</blockquote>" not in card_text:
-            card_text += "</blockquote>"
-        card_text += read_more
+    # F17: Truncate on the RAW (unescaped) snippet, then escape, so the limit can never cut
+    # through an HTML entity (&amp;) or tag. Header/fields are bounded separately.
+    read_more = f'\n... <a href="{escape_tg(url)}">[點此閱讀全文]</a>'
+    if len(card_text) > TG_CARD_LIMIT - len(read_more):
+        card_text = _truncate_raw_then_escape(
+            "\n".join(lines), TG_CARD_LIMIT - len(read_more)
+        )
+
+    snippet = (detail.get("content_snippet") or detail.get("snippet") or "").strip()
+    if snippet:
+        prefix = "\n\n<b>內文重點摘錄</b>:\n<blockquote>"
+        suffix = "</blockquote>"
+        budget = TG_CARD_LIMIT - len(card_text) - len(prefix) - len(suffix)
+        if budget > 0:
+            esc = escape_tg(snippet)
+            if len(esc) <= budget:
+                card_text += f"{prefix}{esc}{suffix}"
+            else:
+                budget -= len(read_more)
+                raw_cut = _fit_raw_to_escaped_budget(snippet, budget)
+                if raw_cut:
+                    card_text += f"{prefix}{escape_tg(raw_cut)}{suffix}{read_more}"
+                else:
+                    card_text += read_more
+        else:
+            card_text += read_more
 
     return card_text
+
+
+TG_CARD_LIMIT = 4000
+
+
+def _fit_raw_to_escaped_budget(raw: str, budget: int) -> str:
+    """Longest prefix of `raw` whose HTML-escaped form fits within `budget` characters."""
+    if budget <= 0:
+        return ""
+    out_len = 0
+    end = 0
+    for ch in raw:
+        n = len(escape_tg(ch))
+        if out_len + n > budget:
+            break
+        out_len += n
+        end += 1
+    return raw[:end]
+
+
+def _truncate_raw_then_escape(card_html: str, limit: int) -> str:
+    """
+    Fallback for extremely long header/field sections (e.g. hundreds of matched rules): cut at a
+    line boundary so no tag or entity is split; every line built above is self-contained HTML.
+    """
+    out: List[str] = []
+    total = 0
+    for ln in card_html.split("\n"):
+        add = len(ln) + (1 if out else 0)
+        if total + add > limit:
+            break
+        out.append(ln)
+        total += add
+    return "\n".join(out)
+
+
+def _plain_text_card(article: Dict[str, Any], detail: Optional[Dict[str, Any]] = None) -> str:
+    """F17: Minimal plain-text fallback card (no parse_mode), bounded to the platform limit."""
+    detail = detail or {}
+    parts = [
+        f"[{article.get('board', '')}] {article.get('title', '')}",
+        f"作者: {article.get('author', '')}",
+        f"欲售價格: {detail.get('extracted_price') or '見內文'}",
+        str(article.get("url", "")),
+    ]
+    return "\n".join(parts)[:TG_CARD_LIMIT]
+
+
+_TG_CATEGORY_WORDS = {"賣", "售", "徵", "買", "收", "換", "all"}
+
+
+def parse_keyword_add_args(
+    args: List[str],
+) -> Tuple[str, str, str, Optional[int], str]:
+    """
+    N2: Parse `/keyword_add` arguments -> (board, category, keyword, max_price, error).
+      /keyword_add 3060Ti                      -> HardwareSale 賣 "3060Ti"
+      /keyword_add 3060Ti 8000                 -> HardwareSale 賣 "3060Ti" <=8000
+      /keyword_add 3060Ti 台北                 -> HardwareSale 賣 "3060Ti 台北"   (not board=3060Ti)
+      /keyword_add MacShop macbook             -> MacShop 賣 "macbook"  (known board / alias)
+      /keyword_add SomeBoard 賣 3060 Ti 7000   -> SomeBoard 賣 "3060 Ti" <=7000 (explicit category
+                                                  marks the first token as a board)
+    """
+    tokens = [t for t in args if t]
+    board, category, max_price = "HardwareSale", "賣", None
+
+    if len(tokens) >= 2:
+        try:
+            parsed = parse_budget(tokens[-1])
+        except ValueError:
+            parsed = None
+        if parsed:
+            max_price = parsed
+            tokens = tokens[:-1]
+
+    if len(tokens) >= 3 and tokens[1].lower() in _TG_CATEGORY_WORDS:
+        board = resolve_board_alias(tokens[0])
+        category = "ALL" if tokens[1].lower() == "all" else tokens[1]
+        tokens = tokens[2:]
+    elif len(tokens) >= 2 and tokens[0].lower() in COMMON_BOARDS_MAP:
+        board = resolve_board_alias(tokens[0])
+        tokens = tokens[1:]
+        if len(tokens) >= 2 and tokens[0].lower() in _TG_CATEGORY_WORDS:
+            category = "ALL" if tokens[0].lower() == "all" else tokens[0]
+            tokens = tokens[1:]
+
+    keyword = " ".join(tokens).strip()
+    if not keyword:
+        return board, category, "", max_price, "請提供欲追蹤之關鍵字"
+    return board, category, keyword, max_price, ""
 
 
 def build_article_keyboard(article_url: str) -> Dict[str, Any]:
@@ -350,6 +480,18 @@ class TelegramNotificationProvider(BaseNotificationProvider):
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
+            if not resp.get("ok") and resp.get("error_code") == 400:
+                # F17: formatting rejected (e.g. entity parse error) -> plain-text fallback
+                logger.warning(
+                    f"[警告] Telegram HTML 卡片被拒 (#{sub_id}): {resp.get('description')}，改送純文字版本"
+                )
+                plain = _plain_text_card(art, detail)
+                resp = await self.api.send_message(
+                    chat_id=chat_id,
+                    text=plain,
+                    parse_mode="",
+                    reply_markup=keyboard,
+                )
 
             if resp.get("ok"):
                 result = resp.get("result", {})
@@ -377,6 +519,12 @@ class TelegramNotificationProvider(BaseNotificationProvider):
                     self.storage.mark_subscriber_dm_failed(sub_id, True)
                     self.storage.set_subscriber_enabled(sub_id, False)
                 break
+            elif resp.get("error_code") == 400:
+                # F17: a single malformed card must not block the remaining articles
+                logger.error(
+                    f"[錯誤] 推播文章給 Telegram #{sub_id} 失敗 (略過此篇): {resp.get('description')}"
+                )
+                continue
             else:
                 logger.error(
                     f"[錯誤] 推播文章給 Telegram #{sub_id} 失敗: {resp.get('description')}"
@@ -398,9 +546,16 @@ class TelegramNotificationProvider(BaseNotificationProvider):
 
                 summary_text = "\n".join(lines)
                 try:
-                    await self.api.send_message(
+                    ov_resp = await self.api.send_message(
                         chat_id=chat_id, text=summary_text, parse_mode="HTML"
                     )
+                    # N3: send_message reports failure via {"ok": False}, not an exception.
+                    # Recording a failed summary as delivered would let dedupe block it forever.
+                    if not ov_resp.get("ok"):
+                        logger.warning(
+                            f"[警告] Telegram 溢出摘要卡片發送失敗 (#{sub_id}): {ov_resp.get('description')}"
+                        )
+                        break
                     if self.storage and sub_id is not None:
                         for it in chunk:
                             self.storage.record_delivery(
@@ -441,7 +596,8 @@ class TelegramNotificationProvider(BaseNotificationProvider):
             art_stub,
             matched_keywords=[mkw] if mkw else [],
             detail=detail,
-            is_sold=True,
+            # F15: AVAILABLE means a RESERVED / NO_MAIL item is back on sale -> normal card
+            is_sold=str(detail.get("sold_state") or "").upper() != "AVAILABLE",
         )
         keyboard = build_article_keyboard(art_stub["url"])
 
@@ -489,8 +645,17 @@ class TelegramBot:
         api_client: Optional[TelegramAPIClient] = None,
         crawler: Optional[Any] = None,
         delivery: Optional[Any] = None,
+        admin_user_ids: Optional[List[str]] = None,
     ):
         self.token = token.strip()
+        if admin_user_ids is None:
+            import config as _config
+
+            raw_admins = getattr(_config, "TELEGRAM_ADMIN_USER_ID", "") or ""
+            admin_user_ids = [x.strip() for x in raw_admins.replace(";", ",").split(",") if x.strip()]
+        # F05 / N4: TELEGRAM_ADMIN_USER_ID (comma separated) may manage any group's shared rules
+        self.admin_user_ids = {str(x) for x in admin_user_ids}
+        self._admin_cache: Dict[Tuple[str, str], Tuple[float, bool]] = {}
         self.storage = storage
         self.api = api_client or TelegramAPIClient(token=self.token)
         self.crawler = crawler
@@ -559,6 +724,41 @@ class TelegramBot:
             "enabled": 1,
         }
 
+    async def _can_write(self, chat: Dict[str, Any], user: Optional[Dict[str, Any]]) -> bool:
+        """
+        F05: Write operations (add/delete rules, pause/resume) on a GROUP's shared subscriber are
+        limited to TELEGRAM_ADMIN_USER_ID or the group's creator/administrators. Private chats
+        always manage their own personal scope.
+        """
+        if chat.get("type", "private") == "private":
+            return True
+        uid = str((user or {}).get("id") or "")
+        if not uid:
+            return False
+        if uid in self.admin_user_ids:
+            return True
+        key = (str(chat.get("id")), uid)
+        now = time.time()
+        cached = self._admin_cache.get(key)
+        if cached and now - cached[0] < 120:
+            return cached[1]
+        allowed = False
+        try:
+            resp = await self.api.get_chat_member(chat["id"], uid)
+            status = ((resp or {}).get("result") or {}).get("status", "")
+            allowed = status in ("creator", "administrator")
+        except Exception as e:
+            logger.warning(f"[警告] 查詢 Telegram 群組成員權限失敗: {e}")
+            return False
+        self._admin_cache[key] = (now, allowed)
+        return allowed
+
+    async def _deny_write(self, chat_id: Union[int, str]) -> None:
+        await self.api.send_message(
+            chat_id,
+            "[權限不足] 群組共用追蹤設定僅限群組管理員或機器人管理者修改。個人追蹤請私訊機器人。",
+        )
+
     async def _handle_message(self, message: Dict[str, Any]) -> None:
         text = (message.get("text") or "").strip()
         if not text or not text.startswith("/"):
@@ -576,6 +776,12 @@ class TelegramBot:
         # 移除群組中的 @bot_username 後綴 (如 /start@MyBot -> /start)
         cmd = raw_cmd.split("@")[0]
         args = parts[1:]
+
+        if cmd in ("/keyword_add", "/add", "/pause", "/resume") and not await self._can_write(
+            chat, user
+        ):
+            await self._deny_write(chat_id)
+            return
 
         if cmd == "/start":
             await self._cmd_start(chat_id, sub)
@@ -649,26 +855,26 @@ class TelegramBot:
             await self.api.send_message(chat_id, "[錯誤] 資料庫尚未連線", parse_mode="HTML")
             return
 
-        # 彈性參數解析
-        board = "HardwareSale"
-        category = "賣"
-        max_price = None
+        board, category, kw, max_price, perr = parse_keyword_add_args(args)
+        if perr:
+            await self.api.send_message(chat_id, f"[錯誤] {escape_tg(perr)}", parse_mode="HTML")
+            return
 
-        if len(args) == 1:
-            kw = args[0]
-        elif len(args) == 2:
-            kw = args[0]
-            if args[1].isdigit():
-                max_price = int(args[1])
-            else:
-                board = args[0]
-                kw = args[1]
-        elif len(args) >= 3:
-            board = args[0]
-            category = args[1]
-            kw = args[2]
-            if len(args) >= 4 and args[3].isdigit():
-                max_price = int(args[3])
+        # N2: resolve aliases and verify boards not yet tracked (same as the Discord flow), so a
+        # typo can never register a non-existent board into the global crawl loop.
+        if board.upper() != "ALL" and not self.storage.is_board_tracked(board):
+            if self.crawler is None or not hasattr(self.crawler, "verify_board"):
+                await self.api.send_message(
+                    chat_id, f"[錯誤] 看板 {escape_tg(board)} 尚未追蹤且無法驗證", parse_mode="HTML"
+                )
+                return
+            valid, canonical, v_msg = await self.crawler.verify_board(board)
+            if not valid:
+                await self.api.send_message(
+                    chat_id, f"[錯誤] 看板驗證失敗：{escape_tg(v_msg)}", parse_mode="HTML"
+                )
+                return
+            board = canonical
 
         ok, msg = self.storage.add_keyword(
             keyword=kw,
@@ -775,6 +981,11 @@ class TelegramBot:
         sub = self._resolve_subscriber(chat, user)
 
         if data.startswith("del_kw:"):
+            if not await self._can_write(chat, user):
+                await self.api.answer_callback_query(
+                    cb_id, text="[權限不足] 僅限群組管理員刪除共用規則", show_alert=True
+                )
+                return
             if not self.storage:
                 await self.api.answer_callback_query(cb_id, text="[錯誤] 資料庫未連線")
                 return

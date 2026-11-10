@@ -264,7 +264,13 @@ def update_existing_embed_for_sold(
         raw_title = raw_title[2:-2].strip()
 
     sold_state = detail.get("sold_state") or ("DELETED" if detail.get("deleted") else "SOLD")
-    if sold_state == "DELETED":
+    card_color = discord.Color.from_rgb(127, 140, 141)
+    if sold_state == "AVAILABLE":
+        # F15: item released from RESERVED / NO_MAIL back to normal sale
+        new_title = raw_title[:256]
+        author_header = f"PTT 【{board}】商品狀態更新（恢復販售）"
+        card_color = discord.Color.from_rgb(46, 204, 113)
+    elif sold_state == "DELETED":
         new_title = f"[原文已刪除] ~~{raw_title[:210]}~~"
         author_header = f"PTT 【{board}】商品狀態更新（原文已刪除）"
     elif sold_state == "RESERVED":
@@ -281,7 +287,7 @@ def update_existing_embed_for_sold(
         title=new_title,
         url=existing_embed.url,
         description=existing_embed.description,
-        color=discord.Color.from_rgb(127, 140, 141),
+        color=card_color,
         timestamp=datetime.now(),
     )
     author_url = (
@@ -291,7 +297,7 @@ def update_existing_embed_for_sold(
     )
     updated.set_author(name=author_header, url=author_url)
 
-    sold_reason = detail.get("sold_reason")
+    sold_reason = detail.get("sold_reason") if sold_state != "AVAILABLE" else None
     reason_added = False
     for f in existing_embed.fields:
         if f.name == "結案原因":

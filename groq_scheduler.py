@@ -123,6 +123,14 @@ class ScheduledGroqJob:
     allowed_models: List[str] = field(compare=False)
     est_tokens: int = field(compare=False)
     future: asyncio.Future = field(compare=False)
+    # F07: absolute deadline (epoch seconds) set at SUBMIT time, covering queueing, model
+    # switching, cooldown waits and every HTTP attempt. 0 = derive from priority at execution.
+    deadline: float = field(default=0.0, compare=False)
+
+
+def job_time_budget(priority: int) -> float:
+    """F07: total time budget per job: interactive 30s, background 120s (includes queueing)."""
+    return 30.0 if priority == P0_INTERACTIVE else 120.0
 
 
 class GroqScheduler:
@@ -245,6 +253,7 @@ class GroqScheduler:
             allowed_models=models_order,
             est_tokens=est_tok,
             future=fut,
+            deadline=time.time() + job_time_budget(priority),
         )
         max_q = self._queue.maxsize or 100
         if priority >= P2_BATCH_SCAN and self._queue.qsize() >= int(max_q * 0.7):
@@ -307,8 +316,12 @@ class GroqScheduler:
         p_data = job.payload
         last_err = None
 
-        max_wait_budget = 30.0 if job.priority == P0_INTERACTIVE else 120.0
-        deadline = time.time() + max_wait_budget
+        max_wait_budget = job_time_budget(job.priority)
+        deadline = job.deadline or (time.time() + max_wait_budget)
+        if time.time() >= deadline:
+            raise GroqBusyError(
+                f"AI 模型冷卻或忙碌中，任務排隊已逾 {max_wait_budget:.0f}s 期限，未執行即放棄，請稍後再試。"
+            )
 
         for attempt in range(2):
             ready_models: List[str] = []
@@ -381,8 +394,21 @@ class GroqScheduler:
                     bucket.in_flight += 1
                     bucket.in_flight_tokens += job.est_tokens
 
+                remaining = deadline - time.time()
+                if remaining <= 0.5:
+                    if bucket:
+                        bucket.in_flight = max(0, bucket.in_flight - 1)
+                        bucket.in_flight_tokens = max(0, bucket.in_flight_tokens - job.est_tokens)
+                    raise GroqBusyError(
+                        f"AI 任務已逾 {max_wait_budget:.0f}s 期限 (最後錯誤: {last_err})"
+                    )
                 try:
-                    async with session.post(GROQ_API_URL, headers=headers, json=req_body) as resp:
+                    async with session.post(
+                        GROQ_API_URL,
+                        headers=headers,
+                        json=req_body,
+                        timeout=aiohttp.ClientTimeout(total=min(45.0, remaining)),
+                    ) as resp:
                         status = resp.status
                         if bucket:
                             bucket.update_from_headers(resp.headers)
@@ -416,6 +442,8 @@ class GroqScheduler:
                         bucket.in_flight = max(0, bucket.in_flight - 1)
                         bucket.in_flight_tokens = max(0, bucket.in_flight_tokens - job.est_tokens)
 
+            if time.time() + 1.0 >= deadline:
+                break
             await asyncio.sleep(1.0)
 
         raise RuntimeError(f"Groq 排程呼叫失敗: {last_err}")

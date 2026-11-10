@@ -82,6 +82,11 @@ BOT_LANGUAGE = _parse_language(os.getenv("BOT_LANGUAGE", DEFAULT_LANGUAGE))
 POLL_MIN = _parse_int(os.getenv("POLL_INTERVAL_MIN", "90"), 90)
 POLL_MAX = _parse_int(os.getenv("POLL_INTERVAL_MAX", "150"), 150)
 
+# N1: Articles whose PTT post timestamp (M.<epoch>.A.xxx) is older than this are treated as
+# history: marked seen silently and never pushed. Prevents low-traffic boards from re-pushing
+# old index-page posts after the 14-day seen_articles cleanup, and bounds outage backfill.
+MAX_ARTICLE_AGE_HOURS = _parse_int(os.getenv("MAX_ARTICLE_AGE_HOURS", "24"), 24)
+
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip()
 GROQ_FAST_MODEL = os.getenv("GROQ_FAST_MODEL", "openai/gpt-oss-20b").strip()

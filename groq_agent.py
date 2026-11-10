@@ -862,6 +862,15 @@ class GroqAgent:
                     step_log = f"[錯誤] 驗證或新增看板 `{board_name}` 失敗：{err_b}"
                     return step_log, json.dumps({"success": False, "error": err_b}, ensure_ascii=False), read_untrusted_ptt
 
+                # F13: Only build a baseline for boards that have none yet. Re-baselining an
+                # already-initialized board would mark other subscribers' pending new articles as seen.
+                if canonical.upper() != "ALL" and self.storage.is_board_initialized(canonical):
+                    step_log = f"[看板已在追蹤] `{canonical}`"
+                    return step_log, json.dumps(
+                        {"success": True, "canonical_board": canonical, "already_tracked": True},
+                        ensure_ascii=False,
+                    ), read_untrusted_ptt
+
                 ok, arts, _ = await self.crawler.fetch_board_articles(
                     canonical, fetch_prev_if_few=False, max_pages=1
                 )
@@ -889,7 +898,7 @@ class GroqAgent:
                     if fz["board"].lower() == board_name.lower():
                         self.storage.remove_fuzzy_rule(str(fz["id"]), subscriber_id=subscriber_id)
 
-                if not self.storage.has_active_rules_for_board(board_name):
+                if not self.storage.has_any_rules_for_board(board_name):
                     removed = self.storage.remove_board(board_name)
                     step_log = f"[移除看板] `{removed or board_name}`"
                     return step_log, json.dumps(
@@ -1302,6 +1311,31 @@ class GroqAgent:
         detail: Dict,
         rules: List[Dict],
     ) -> List[Dict[str, Any]]:
+        matches, _complete = await self.evaluate_article_fuzzy_rules_ex(article, detail, rules)
+        return matches
+
+    async def evaluate_article_fuzzy_rules_ex(
+        self,
+        article: Dict,
+        detail: Dict,
+        rules: List[Dict],
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """
+        F03: Same as `evaluate_article_fuzzy_rules` but also reports whether every applicable
+        rule batch received a definitive AI answer. `complete=False` (rate limit / timeout /
+        malformed reply) means the article must be retried instead of treated as "no match".
+        """
+        complete = [True]
+        matches = await self._evaluate_article_fuzzy_rules_impl(article, detail, rules, complete)
+        return matches, complete[0]
+
+    async def _evaluate_article_fuzzy_rules_impl(
+        self,
+        article: Dict,
+        detail: Dict,
+        rules: List[Dict],
+        complete: List[bool],
+    ) -> List[Dict[str, Any]]:
         """
         Fix P1-8: Evaluate a new PTT article against active fuzzy rules in batches of at most 8 rules per call,
         wrapping each rule in `<user_rule id="...">` tags to prevent cross-tenant rule injection.
@@ -1460,6 +1494,7 @@ class GroqAgent:
                                 model=used_model,
                             )
             except Exception as e:
-                logger.warning(f"AI 模糊規則判斷異常: {e}")
+                logger.warning(f"AI 模糊規則判斷異常 (將於下輪重試): {e}")
+                complete[0] = False
 
         return cached_matches
