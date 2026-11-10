@@ -17,3 +17,7 @@ IMPLEMENTATION_GUIDE.md
 .agents/
 pre_release_verification/
 
+
+# docs/ keeps only deployment guides in the repo; other docs are local-only
+docs/*
+!docs/deploy-*.md
