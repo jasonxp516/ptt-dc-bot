@@ -7,12 +7,13 @@
 ## 1. 專案概況與最新狀態 (Project Overview & Status)
 
 - **專案名稱**：PTT-DC-Bot (PTT 智慧二手交易追蹤與多平台即時推播機器人)
-- **最新發行版本**：`v1.1.0` (Production Release)
+- **最新發行版本**：`v1.2.0` (Production Release，可靠性與權限修正版，見 `docs/RELEASE_NOTES_v1.2.0.md`)
 - **工作目錄**：`/home/jason/Desktop/ptt_dc_bot/ptt_dc_bot_release`
 - **Git 遠端倉庫**：`git@github.com:jasonxp516/ptt-dc-bot.git`
 - **分支現況**：
   - `main` 分支與 `beta` 分支均已同步至最新提交（包含完整的 Phase 1～4 重構、加固、文件模組化與專案企劃書）。
-  - 已建立發布標籤 `v1.1.0` 並推送至遠端，自動觸發 GitHub Actions 釋出跨平台套件與 GHCR 多架構 Docker 映像檔。
+  - 已建立發布標籤 `v1.2.0` 並推送至遠端，自動觸發 GitHub Actions 釋出跨平台套件與 GHCR 多架構 Docker 映像檔。
+  - 審查計畫 `docs/ptt-dc-bot-modification-plan.md` 中尚未實作：F01（持久投遞佇列）、F06（恢復通知）、F10（停用 Discord）、F14（訂閱生效時間），詳見發行說明「已知限制」。
 - **Python 執行環境**：
   - 主要測試與虛擬環境：`/tmp/ptt_venv`（包含 `pytest`、`aiohttp`、`discord.py`、`pyyaml`、`reportlab` 等）。
   - 若在全新機器，可執行 `python3 -m venv .venv && ./venv/bin/pip install -r requirements.txt pytest pyyaml`。
