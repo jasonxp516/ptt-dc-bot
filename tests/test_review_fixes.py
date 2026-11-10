@@ -1,8 +1,8 @@
 """
 Regression tests for the 2026-11 review fixes.
 
-Each test is tagged with the finding ID it covers (F01..F17 from the plan, N1..N9 from the
-Claude Code review). Written as unittest.TestCase so both `pytest` and `unittest discover`
+Each test is tagged with the finding ID it covers (F01..F17, N1..N9).
+Written as unittest.TestCase so both `pytest` and `unittest discover`
 (used by the release gate) collect them.
 """
 
