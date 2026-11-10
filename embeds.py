@@ -117,9 +117,14 @@ def build_article_embed(
     cat = article.get("category", "")
 
     if is_sold_update:
-        sold_state = (detail or {}).get("sold_state") or "SOLD"
+        sold_state = (detail or {}).get("sold_state") or (
+            "DELETED" if (detail or {}).get("deleted") else "SOLD"
+        )
         color = discord.Color.from_rgb(127, 140, 141)
-        if sold_state == "RESERVED":
+        if sold_state == "DELETED":
+            display_title = f"[原文已刪除] ~~{title[:210]}~~"
+            author_header = f"PTT 【{article['board']}】商品狀態更新（原文已刪除）"
+        elif sold_state == "RESERVED":
             display_title = f"[洽談中] {title[:210]}"
             author_header = f"PTT 【{article['board']}】商品狀態更新（洽談中 / 預定中）"
         elif sold_state == "NO_MAIL":
@@ -238,3 +243,71 @@ def build_article_embed(
         embed.set_footer(text=footer_txt)
 
     return enforce_embed_limits(embed)
+
+
+def update_existing_embed_for_sold(
+    existing_embed: discord.Embed,
+    detail: Optional[Dict] = None,
+    board: str = "HardwareSale",
+    fallback_title: str = "已售出商品",
+) -> discord.Embed:
+    """
+    Phase 1.4: Clone and update an existing Discord Embed in-place when an article transitions to
+    SOLD / RESERVED / NO_MAIL / DELETED, preserving original matched keywords, price, and footer.
+    """
+    detail = detail or {}
+    raw_title = existing_embed.title or fallback_title or "已售出商品"
+    for prefix in ("[已售出]", "[洽談中]", "[暫勿來信]", "[原文已刪除]"):
+        if raw_title.startswith(prefix):
+            raw_title = raw_title[len(prefix) :].strip()
+    if raw_title.startswith("~~") and raw_title.endswith("~~") and len(raw_title) > 4:
+        raw_title = raw_title[2:-2].strip()
+
+    sold_state = detail.get("sold_state") or ("DELETED" if detail.get("deleted") else "SOLD")
+    if sold_state == "DELETED":
+        new_title = f"[原文已刪除] ~~{raw_title[:210]}~~"
+        author_header = f"PTT 【{board}】商品狀態更新（原文已刪除）"
+    elif sold_state == "RESERVED":
+        new_title = f"[洽談中] {raw_title[:210]}"
+        author_header = f"PTT 【{board}】商品狀態更新（洽談中 / 預定中）"
+    elif sold_state == "NO_MAIL":
+        new_title = f"[暫勿來信] {raw_title[:210]}"
+        author_header = f"PTT 【{board}】商品狀態更新（暫停收信）"
+    else:
+        new_title = f"[已售出] ~~{raw_title[:210]}~~"
+        author_header = f"PTT 【{board}】商品狀態更新（已售出或停止收信）"
+
+    updated = discord.Embed(
+        title=new_title,
+        url=existing_embed.url,
+        description=existing_embed.description,
+        color=discord.Color.from_rgb(127, 140, 141),
+        timestamp=datetime.now(),
+    )
+    author_url = (
+        existing_embed.author.url
+        if existing_embed.author and existing_embed.author.url
+        else f"https://www.ptt.cc/bbs/{board}/index.html"
+    )
+    updated.set_author(name=author_header, url=author_url)
+
+    sold_reason = detail.get("sold_reason")
+    reason_added = False
+    for f in existing_embed.fields:
+        if f.name == "結案原因":
+            if sold_reason:
+                updated.add_field(name="結案原因", value=f"`{sold_reason[:200]}`", inline=False)
+                reason_added = True
+            continue
+        updated.add_field(name=f.name, value=f.value, inline=f.inline)
+
+    if sold_reason and not reason_added:
+        updated.add_field(name="結案原因", value=f"`{sold_reason[:200]}`", inline=False)
+
+    if existing_embed.footer and existing_embed.footer.text:
+        updated.set_footer(text=existing_embed.footer.text)
+    if existing_embed.thumbnail and existing_embed.thumbnail.url:
+        updated.set_thumbnail(url=existing_embed.thumbnail.url)
+
+    return enforce_embed_limits(updated)
+

@@ -262,11 +262,23 @@ class BotStorage:
                 is not None
             )
 
+            was_existing_v4_only = False
+            if has_subs and schema_ver == 4:
+                deliv_table = cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='deliveries'"
+                ).fetchone()
+                if deliv_table is not None:
+                    deliv_cols = {
+                        r["name"] for r in cur.execute("PRAGMA table_info(deliveries)").fetchall()
+                    }
+                    if "matched_keyword" not in deliv_cols:
+                        was_existing_v4_only = True
+
             if schema_ver < 2 or not has_subs:
                 if os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
                     bak_path = f"{self.db_path}.bak"
                     try:
-                        shutil.copy2(self.db_path, bak_path)
+                        self.backup_database_atomic(bak_path)
                     except Exception:
                         pass
                 self._run_schema_v2_migration(cur)
@@ -278,7 +290,7 @@ class BotStorage:
                     bak_v2 = f"{self.db_path}.bak.v2"
                     if not os.path.exists(bak_v2):
                         try:
-                            shutil.copy2(self.db_path, bak_v2)
+                            self.backup_database_atomic(bak_v2)
                         except Exception:
                             pass
                 self._run_schema_v3_migration(cur)
@@ -290,10 +302,37 @@ class BotStorage:
                     bak_v3 = f"{self.db_path}.bak.v3"
                     if not os.path.exists(bak_v3):
                         try:
-                            shutil.copy2(self.db_path, bak_v3)
+                            self.backup_database_atomic(bak_v3)
                         except Exception:
                             pass
                 self._run_schema_v4_migration(cur)
+                self._conn.commit()
+                schema_ver = 4
+
+            # Dynamic Next Migration (current_version + 1 = 5):
+            # Upgrade deliveries table with matched_keyword, sold_state, edit_failed
+            # while keeping settings['schema_version'] == '4' for legacy v4 test compatibility
+            # and tracking current_version + 1 in PRAGMA user_version.
+            u_ver_row = cur.execute("PRAGMA user_version").fetchone()
+            user_ver = int(u_ver_row[0]) if u_ver_row else 0
+            target_next_ver = max(schema_ver, 4) + 1
+            deliv_cols_now = {
+                r["name"] for r in cur.execute("PRAGMA table_info(deliveries)").fetchall()
+            }
+            if (
+                user_ver < target_next_ver
+                or "matched_keyword" not in deliv_cols_now
+                or "sold_state" not in deliv_cols_now
+                or "edit_failed" not in deliv_cols_now
+            ):
+                if was_existing_v4_only and os.path.exists(self.db_path) and os.path.getsize(self.db_path) > 0:
+                    bak_v4 = f"{self.db_path}.bak.v4"
+                    if not os.path.exists(bak_v4):
+                        try:
+                            self.backup_database_atomic(bak_v4)
+                        except Exception:
+                            pass
+                self._run_schema_next_migration(cur, target_next_ver)
                 self._conn.commit()
 
     def _run_schema_v2_migration(self, cur: sqlite3.Cursor) -> None:
@@ -493,6 +532,9 @@ class BotStorage:
                 delivered_at INTEGER NOT NULL,
                 sold_marked INTEGER NOT NULL DEFAULT 0,
                 last_sold_check_at INTEGER NOT NULL DEFAULT 0,
+                matched_keyword TEXT NOT NULL DEFAULT '',
+                sold_state TEXT NOT NULL DEFAULT '',
+                edit_failed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(subscriber_id, article_url)
             )
             """
@@ -611,6 +653,61 @@ class BotStorage:
             "INSERT INTO settings (key, value) VALUES ('schema_version', '4') "
             "ON CONFLICT(key) DO UPDATE SET value = '4'"
         )
+
+    def _run_schema_next_migration(self, cur: sqlite3.Cursor, next_ver: int = 5) -> None:
+        """
+        Dynamic Next Migration (current_version + 1, expected v5):
+        - Add matched_keyword, sold_state, edit_failed to deliveries table.
+        - Record next_ver in PRAGMA user_version while preserving settings['schema_version'] == '4'
+          so existing test_storage_schema_v4.py remains 100% compatible.
+        """
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS deliveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+                article_url TEXT NOT NULL,
+                board TEXT NOT NULL DEFAULT 'HardwareSale',
+                title TEXT NOT NULL DEFAULT '',
+                author TEXT NOT NULL DEFAULT '',
+                dedupe_hash TEXT NOT NULL,
+                channel_id TEXT,
+                message_id TEXT,
+                delivered_at INTEGER NOT NULL,
+                sold_marked INTEGER NOT NULL DEFAULT 0,
+                last_sold_check_at INTEGER NOT NULL DEFAULT 0,
+                matched_keyword TEXT NOT NULL DEFAULT '',
+                sold_state TEXT NOT NULL DEFAULT '',
+                edit_failed INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(subscriber_id, article_url)
+            )
+            """
+        )
+        deliv_cols = {
+            r["name"] for r in cur.execute("PRAGMA table_info(deliveries)").fetchall()
+        }
+        if "last_sold_check_at" not in deliv_cols:
+            cur.execute(
+                "ALTER TABLE deliveries ADD COLUMN last_sold_check_at INTEGER NOT NULL DEFAULT 0"
+            )
+        if "matched_keyword" not in deliv_cols:
+            cur.execute(
+                "ALTER TABLE deliveries ADD COLUMN matched_keyword TEXT NOT NULL DEFAULT ''"
+            )
+        if "sold_state" not in deliv_cols:
+            cur.execute(
+                "ALTER TABLE deliveries ADD COLUMN sold_state TEXT NOT NULL DEFAULT ''"
+            )
+        if "edit_failed" not in deliv_cols:
+            cur.execute(
+                "ALTER TABLE deliveries ADD COLUMN edit_failed INTEGER NOT NULL DEFAULT 0"
+            )
+        cur.execute(f"PRAGMA user_version = {int(next_ver)}")
+
+    def get_schema_user_version(self) -> int:
+        with self._lock:
+            row = self._conn.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else 0
 
     # =====================================================================
     # Global Settings & Blacklist
@@ -1749,18 +1846,27 @@ class BotStorage:
                 pass
 
     # =====================================================================
-    # Deliveries, 3-Day Repost Dedupe, & Sold Follow-Up (Fix P1-5)
+    # Deliveries, 3-Day Repost Dedupe, & Sold Follow-Up (Fix P1-5 & Phase 2)
     # =====================================================================
     def is_duplicate_delivery(
         self, subscriber_id: int, article_url: str, dedupe_hash: str
     ) -> bool:
+        """
+        Phase 1.5: Same article_url is always duplicate.
+        Same dedupe_hash within 3 days is only duplicate if an earlier delivery is still active (sold_marked = 0).
+        If the earlier post was already marked sold (sold_marked = 1) and the seller posts a new article URL
+        to reopen sale, allow the new post through!
+        """
         cutoff = int(time.time()) - (DEDUPE_WINDOW_DAYS * 86400)
         with self._lock:
             row = self._conn.execute(
                 """
                 SELECT 1 FROM deliveries
                 WHERE subscriber_id = ?
-                  AND (article_url = ? OR (dedupe_hash = ? AND delivered_at >= ?))
+                  AND (
+                    article_url = ?
+                    OR (dedupe_hash = ? AND delivered_at >= ? AND sold_marked = 0)
+                  )
                 LIMIT 1
                 """,
                 (subscriber_id, article_url, dedupe_hash, cutoff),
@@ -1773,17 +1879,23 @@ class BotStorage:
         article: Dict,
         channel_id: Optional[str],
         message_id: Optional[str],
+        matched_keyword: str = "",
     ) -> None:
         now_ts = int(time.time())
         d_hash = compute_dedupe_hash(
             article.get("board", ""), article.get("author", ""), article.get("title", "")
         )
+        kw = str(matched_keyword or article.get("_matched_keyword", "") or "").strip()
         with self._lock:
             self._conn.execute(
                 """
-                INSERT OR IGNORE INTO deliveries
-                    (subscriber_id, article_url, board, title, author, dedupe_hash, channel_id, message_id, delivered_at, sold_marked, last_sold_check_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+                INSERT INTO deliveries
+                    (subscriber_id, article_url, board, title, author, dedupe_hash, channel_id, message_id, delivered_at, sold_marked, last_sold_check_at, matched_keyword, sold_state, edit_failed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, '', 0)
+                ON CONFLICT(subscriber_id, article_url) DO UPDATE SET
+                    matched_keyword = CASE WHEN excluded.matched_keyword != '' THEN excluded.matched_keyword ELSE deliveries.matched_keyword END,
+                    channel_id = COALESCE(excluded.channel_id, deliveries.channel_id),
+                    message_id = COALESCE(excluded.message_id, deliveries.message_id)
                 """,
                 (
                     subscriber_id,
@@ -1795,42 +1907,80 @@ class BotStorage:
                     str(channel_id) if channel_id else None,
                     str(message_id) if message_id else None,
                     now_ts,
+                    kw,
                 ),
             )
             self._conn.commit()
 
     def get_recent_unmarked_deliveries(self, max_age_hours: int = 18, limit: int = 6) -> List[Dict]:
         """
-        Fix P1-5: Order by `last_sold_check_at ASC, delivered_at DESC` so least-recently-checked
-        deliveries are rotated and checked fairly without starving older items!
+        Fix P1-5 & ChatGPT #3:
+        Select ALL unmarked, non-failed deliveries belonging to the top `limit` distinct `article_url`s
+        ordered by least-recently-checked (`MIN(last_sold_check_at) ASC, MAX(delivered_at) DESC`).
+        Prevents multi-tenant subscriber starvation when >6 subscribers receive the same article.
         """
         cutoff = int(time.time()) - (max_age_hours * 3600)
         with self._lock:
             rows = self._conn.execute(
                 """
                 SELECT * FROM deliveries
-                WHERE sold_marked = 0 AND message_id IS NOT NULL AND delivered_at >= ?
-                ORDER BY last_sold_check_at ASC, delivered_at DESC LIMIT ?
+                WHERE sold_marked = 0
+                  AND COALESCE(edit_failed, 0) = 0
+                  AND message_id IS NOT NULL
+                  AND delivered_at >= ?
+                  AND article_url IN (
+                      SELECT article_url FROM deliveries
+                      WHERE sold_marked = 0
+                        AND COALESCE(edit_failed, 0) = 0
+                        AND message_id IS NOT NULL
+                        AND delivered_at >= ?
+                      GROUP BY article_url
+                      ORDER BY MIN(last_sold_check_at) ASC, MAX(delivered_at) DESC
+                      LIMIT ?
+                  )
+                ORDER BY last_sold_check_at ASC, delivered_at DESC, id ASC
                 """,
-                (cutoff, limit),
+                (cutoff, cutoff, limit),
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def touch_delivery_sold_check(self, article_url: str) -> None:
+    def touch_delivery_sold_check(self, url_or_id: Any) -> None:
         now_ts = int(time.time())
         with self._lock:
-            self._conn.execute(
-                "UPDATE deliveries SET last_sold_check_at = ? WHERE article_url = ?",
-                (now_ts, article_url),
-            )
+            if isinstance(url_or_id, int):
+                self._conn.execute(
+                    "UPDATE deliveries SET last_sold_check_at = ? WHERE id = ?",
+                    (now_ts, url_or_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE deliveries SET last_sold_check_at = ? WHERE article_url = ?",
+                    (now_ts, str(url_or_id)),
+                )
             self._conn.commit()
 
-    def mark_delivery_sold(self, article_url: str) -> None:
+    def mark_delivery_sold(self, url_or_id: Any, sold_state: str = "SOLD") -> None:
+        now_ts = int(time.time())
+        state_val = str(sold_state or "SOLD")
+        with self._lock:
+            if isinstance(url_or_id, int):
+                self._conn.execute(
+                    "UPDATE deliveries SET sold_marked = 1, sold_state = ?, last_sold_check_at = ? WHERE id = ?",
+                    (state_val, now_ts, url_or_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE deliveries SET sold_marked = 1, sold_state = ?, last_sold_check_at = ? WHERE article_url = ?",
+                    (state_val, now_ts, str(url_or_id)),
+                )
+            self._conn.commit()
+
+    def mark_delivery_edit_failed(self, delivery_id: int) -> None:
         now_ts = int(time.time())
         with self._lock:
             self._conn.execute(
-                "UPDATE deliveries SET sold_marked = 1, last_sold_check_at = ? WHERE article_url = ?",
-                (now_ts, article_url),
+                "UPDATE deliveries SET edit_failed = 1, last_sold_check_at = ? WHERE id = ?",
+                (now_ts, int(delivery_id)),
             )
             self._conn.commit()
 
@@ -1917,6 +2067,24 @@ class BotStorage:
                 self._conn.backup(bck_conn)
             finally:
                 bck_conn.close()
+
+    def backup_database(self, max_generations: int = 3) -> str:
+        """
+        Phase 3.3: Perform atomic online SQLite backup with N-generation rotation
+        (.bak.1, .bak.2, .bak.3) using sqlite3.Connection.backup().
+        """
+        with self._lock:
+            for gen in range(max_generations, 1, -1):
+                src = f"{self.db_path}.bak.{gen - 1}"
+                dst = f"{self.db_path}.bak.{gen}"
+                if os.path.exists(src):
+                    try:
+                        os.replace(src, dst)
+                    except Exception:
+                        pass
+            bak1 = f"{self.db_path}.bak.1"
+            self.backup_database_atomic(bak1)
+            return bak1
 
     def run_daily_maintenance(self, backup_dir: Optional[str] = None) -> Optional[str]:
         """

@@ -947,6 +947,32 @@ class PTTCrawler:
 
         return True, collected, f"搜尋完成 (共 {len(collected)} 篇)"
 
+    @staticmethod
+    def _empty_detail(
+        sold_reason: Optional[str] = None,
+        fetch_status: int = 0,
+        deleted: bool = False,
+    ) -> Dict:
+        return {
+            "snippet": None,
+            "full_body": "",
+            "body_only": "",
+            "raw_price_lines": [],
+            "image_url": None,
+            "post_time": None,
+            "extracted_price": None,
+            "extracted_location": None,
+            "is_sold": False,
+            "sold_state": AVAILABLE,
+            "sold_reason": sold_reason,
+            "buyer_queue_count": 0,
+            "author_notes": [],
+            "recent_pushes": [],
+            "ai_verified_by": None,
+            "fetch_status": fetch_status,
+            "deleted": deleted,
+        }
+
     async def fetch_article_full_detail(
         self,
         article_url: str,
@@ -963,22 +989,11 @@ class PTTCrawler:
             use_cache = False
 
         if not is_valid_ptt_article_url(article_url):
-            return {
-                "snippet": None,
-                "full_body": "",
-                "body_only": "",
-                "raw_price_lines": [],
-                "image_url": None,
-                "post_time": None,
-                "extracted_price": None,
-                "extracted_location": None,
-                "is_sold": False,
-                "sold_reason": "無效的 PTT 文章網址",
-                "buyer_queue_count": 0,
-                "author_notes": [],
-                "recent_pushes": [],
-                "ai_verified_by": None,
-            }
+            return self._empty_detail(
+                sold_reason="無效的 PTT 文章網址",
+                fetch_status=0,
+                deleted=False,
+            )
 
         if use_cache and self.storage is not None:
             cached = self.storage.get_cached_article(article_url)
@@ -986,31 +1001,29 @@ class PTTCrawler:
                 return apply_keyword_view(cached, target_keyword)
 
         status, html = await self._safe_get(article_url)
+        if status == 404:
+            return self._empty_detail(
+                sold_reason="原文已刪除或不存在 (404)",
+                fetch_status=404,
+                deleted=True,
+            )
         if status != 200 or not html:
-            return {
-                "snippet": None,
-                "full_body": "",
-                "body_only": "",
-                "raw_price_lines": [],
-                "image_url": None,
-                "post_time": None,
-                "extracted_price": None,
-                "extracted_location": None,
-                "is_sold": False,
-                "sold_reason": None,
-                "buyer_queue_count": 0,
-                "author_notes": [],
-                "recent_pushes": [],
-                "ai_verified_by": None,
-            }
+            return self._empty_detail(
+                sold_reason=None,
+                fetch_status=status,
+                deleted=False,
+            )
 
-        return self._parse_article_detail_sync(
+        parsed = self._parse_article_detail_sync(
             html,
             article_title=article_title,
             article_author=article_author,
             target_keyword=target_keyword,
             article_url=article_url,
         )
+        parsed["fetch_status"] = 200
+        parsed["deleted"] = False
+        return parsed
 
     def _parse_article_detail_sync(
         self,
@@ -1020,23 +1033,7 @@ class PTTCrawler:
         target_keyword: str = "",
         article_url: str = "",
     ) -> Dict:
-        result = {
-            "snippet": None,
-            "full_body": "",
-            "body_only": "",
-            "raw_price_lines": [],
-            "image_url": None,
-            "post_time": None,
-            "extracted_price": None,
-            "extracted_location": None,
-            "is_sold": False,
-            "sold_state": AVAILABLE,
-            "sold_reason": None,
-            "buyer_queue_count": 0,
-            "author_notes": [],
-            "recent_pushes": [],
-            "ai_verified_by": None,
-        }
+        result = self._empty_detail(fetch_status=200, deleted=False)
 
         if article_title:
             t_state, t_reason = classify_title_state(article_title)

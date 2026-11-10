@@ -725,17 +725,18 @@ class PTTDiscordBot(discord.Client):
                     )
                     continue
 
-                self.storage.mark_articles_seen(new_articles)
                 if len(new_articles) > 20:
                     logger.info(
                         f"看板 {board_name} 單輪新文章達 {len(new_articles)} 篇，僅處理最新 20 篇以防洪水推播"
                     )
+                    self.storage.mark_articles_seen(new_articles[:-20])
                     new_articles = new_articles[-20:]
                 summary["new_articles"] += len(new_articles)
 
                 board_fuzzy_rules = self.storage.get_fuzzy_rules(board=board_name)
                 per_sub_queue: Dict[int, List[Dict[str, Any]]] = {}
                 matched_articles_count = 0
+                evaluated_articles: List[Dict[str, Any]] = []
 
                 for art in new_articles:
                     kw_hits = self.storage.match_article_keywords_detailed(
@@ -755,6 +756,7 @@ class PTTDiscordBot(discord.Client):
                         or bool(all_mode_sub_ids)
                     )
                     if not needs_detail:
+                        evaluated_articles.append(art)
                         continue
 
                     # Fix P1-1: Fetch keyword-agnostic base detail first
@@ -764,6 +766,17 @@ class PTTDiscordBot(discord.Client):
                         article_author=art.get("author", ""),
                         target_keyword="",
                     )
+                    # Outbox / Seen Timing (ChatGPT #2 & Phase 3.3):
+                    # If fetching article detail failed due to transient network/cooldown error (not 200 and not 404),
+                    # do NOT mark this article as seen yet so the next poll cycle retries it!
+                    fetch_st = base_detail.get("fetch_status", 200)
+                    if fetch_st not in (200, 404) and not base_detail.get("full_body"):
+                        logger.warning(
+                            f"看板 {board_name} 文章內文抓取暫時失敗 (status={fetch_st})，保留於下輪重試: {art['url']}"
+                        )
+                        continue
+
+                    evaluated_articles.append(art)
                     is_selling_post = "賣" in art.get("category", "") or "售" in art.get(
                         "category", ""
                     )
@@ -803,6 +816,7 @@ class PTTDiscordBot(discord.Client):
                         token_eval[tok] = (True, tok_detail)
 
                     sub_kw_labels: Dict[int, List[str]] = {}
+                    sub_primary_kw: Dict[int, str] = {}
                     sub_best_detail: Dict[int, Dict[str, Any]] = {}
                     for kh in kw_hits:
                         tok = kh["primary_token"]
@@ -821,6 +835,7 @@ class PTTDiscordBot(discord.Client):
                             ):
                                 continue
                         sub_kw_labels.setdefault(sid, []).append(kh["label"])
+                        sub_primary_kw.setdefault(sid, kh["keyword"])
                         sub_best_detail.setdefault(sid, tok_detail)
 
                     # Evaluate all subscribers' fuzzy rules if the whole post isn't already marked sold
@@ -857,19 +872,13 @@ class PTTDiscordBot(discord.Client):
                                 {
                                     "article": art,
                                     "matched_keywords": sub_kw_labels.get(sid, []),
+                                    "matched_keyword": sub_primary_kw.get(sid, ""),
                                     "detail": sub_best_detail.get(sid, base_detail),
                                     "fuzzy_matches": sub_fuzzy_map.get(sid, []),
                                 }
                             )
 
-                self.storage.update_board_status(
-                    board_name,
-                    True,
-                    f"正常盯梢中 (新文 {len(new_articles)} 篇 / 命中 {matched_articles_count} 篇)",
-                    scanned_now=True,
-                )
-
-                # Deliver to each matched subscriber
+                # Deliver to each matched subscriber BEFORE marking evaluated articles as seen
                 for sid, items in per_sub_queue.items():
                     sub = sub_map.get(sid)
                     if not sub:
@@ -878,6 +887,16 @@ class PTTDiscordBot(discord.Client):
                         sub, items
                     )
                     summary["pushed"] += pushed_cnt
+
+                if evaluated_articles:
+                    self.storage.mark_articles_seen(evaluated_articles)
+
+                self.storage.update_board_status(
+                    board_name,
+                    True,
+                    f"正常盯梢中 (新文 {len(new_articles)} 篇 / 命中 {matched_articles_count} 篇)",
+                    scanned_now=True,
+                )
 
             # D1 & P1-5: Periodically check up to 2 recent delivered articles in round-robin order
             try:

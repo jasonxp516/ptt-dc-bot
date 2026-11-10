@@ -194,8 +194,17 @@ def format_article_card(
     category = escape_tg(article.get("category", "賣"))
     ai_note = detail.get("ai_summary_note") or detail.get("ai_reason")
 
+    sold_state = detail.get("sold_state") or ("DELETED" if detail.get("deleted") else "SOLD")
+
     if is_sold:
-        header = f"<s>[{board}] {escape_tg(title_raw)}</s>\n<b>[已售出 / 結束]</b>"
+        if sold_state == "DELETED":
+            header = f"<s>[{board}] {escape_tg(title_raw)}</s>\n<b>[原文已刪除]</b>"
+        elif sold_state == "RESERVED":
+            header = f"<b>[{board}] {escape_tg(title_raw)}</b>\n<b>[洽談中 / 預定中]</b>"
+        elif sold_state == "NO_MAIL":
+            header = f"<b>[{board}] {escape_tg(title_raw)}</b>\n<b>[暫勿來信]</b>"
+        else:
+            header = f"<s>[{board}] {escape_tg(title_raw)}</s>\n<b>[已售出 / 結束]</b>"
     else:
         header = f"<b>[{board}] {escape_tg(title_raw)}</b>"
 
@@ -206,7 +215,14 @@ def format_article_card(
     lines.append(f"<b>作者</b>: {author}")
 
     if is_sold:
-        lines.append(f"<b>欲售價格</b>: <s>{price_display}</s> <b>[已售出]</b>")
+        if sold_state == "RESERVED":
+            lines.append(f"<b>欲售價格</b>: <code>{price_display}</code> <b>[洽談中]</b>")
+        elif sold_state == "NO_MAIL":
+            lines.append(f"<b>欲售價格</b>: <code>{price_display}</code> <b>[暫勿來信]</b>")
+        elif sold_state == "DELETED":
+            lines.append(f"<b>欲售價格</b>: <s>{price_display}</s> <b>[原文已刪除]</b>")
+        else:
+            lines.append(f"<b>欲售價格</b>: <s>{price_display}</s> <b>[已售出]</b>")
     else:
         lines.append(f"<b>欲售價格</b>: <code>{price_display}</code>")
 
@@ -339,11 +355,16 @@ class TelegramNotificationProvider(BaseNotificationProvider):
                 result = resp.get("result", {})
                 msg_id = result.get("message_id")
                 if self.storage and sub_id is not None:
+                    kw_to_record = (
+                        it.get("matched_keyword")
+                        or (matched_kws[0] if matched_kws else "")
+                    )
                     self.storage.record_delivery(
                         subscriber_id=sub_id,
                         article=art,
                         channel_id=str(chat_id),
                         message_id=str(msg_id) if msg_id else None,
+                        matched_keyword=kw_to_record,
                     )
                     self.storage.increment_pushed_count(1)
                 pushed += 1
@@ -415,9 +436,10 @@ class TelegramNotificationProvider(BaseNotificationProvider):
             "author": delivery_record.get("author", "未知"),
             "category": "賣",
         }
+        mkw = delivery_record.get("matched_keyword")
         sold_html = format_article_card(
             art_stub,
-            matched_keywords=[],
+            matched_keywords=[mkw] if mkw else [],
             detail=detail,
             is_sold=True,
         )
@@ -435,9 +457,21 @@ class TelegramNotificationProvider(BaseNotificationProvider):
             logger.info(f"[成功] 已成功在 Telegram 原位更新已售出卡片 (Msg #{msg_id})")
             return True
         else:
-            logger.debug(
-                f"Telegram 更新已售出訊息略過 (Msg #{msg_id}): {resp.get('description')}"
-            )
+            desc_lower = str(resp.get("description") or "").lower()
+            if "message is not modified" in desc_lower:
+                return True
+            err_code = resp.get("error_code")
+            if err_code in (400, 403):
+                logger.warning(
+                    f"Telegram 更新已售出訊息失敗 ({err_code}, Msg #{msg_id})，標記 edit_failed=1: {resp.get('description')}"
+                )
+                d_id = delivery_record.get("id")
+                if d_id is not None and self.storage and hasattr(self.storage, "mark_delivery_edit_failed"):
+                    self.storage.mark_delivery_edit_failed(int(d_id))
+            else:
+                logger.debug(
+                    f"Telegram 更新已售出訊息略過 (Msg #{msg_id}): {resp.get('description')}"
+                )
             return False
 
 

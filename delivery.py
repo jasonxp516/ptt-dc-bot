@@ -8,7 +8,12 @@ from typing import Any, Dict, List, Optional
 import discord
 
 from config import MAX_PUSH_PER_CYCLE_PER_SUBSCRIBER
-from embeds import ArticleLinkView, build_article_embed, enforce_embed_limits
+from embeds import (
+    ArticleLinkView,
+    build_article_embed,
+    enforce_embed_limits,
+    update_existing_embed_for_sold,
+)
 from ptt_crawler import PTTCrawler
 from storage import BotStorage, compute_dedupe_hash
 
@@ -148,11 +153,16 @@ class DiscordNotificationProvider(BaseNotificationProvider):
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
                 ch_id = getattr(target, "id", None) or subscriber.get("push_channel_id")
+                kw_to_record = (
+                    it.get("matched_keyword")
+                    or (matched_kws[0] if matched_kws else "")
+                )
                 self.storage.record_delivery(
                     subscriber_id=sub_id,
                     article=art,
                     channel_id=str(ch_id) if ch_id else None,
                     message_id=str(msg.id) if msg else None,
+                    matched_keyword=kw_to_record,
                 )
                 self.storage.increment_pushed_count(1)
                 pushed += 1
@@ -217,23 +227,46 @@ class DiscordNotificationProvider(BaseNotificationProvider):
             if target is None:
                 return False
             msg = await target.fetch_message(int(msg_id))
-            art_stub = {
-                "url": delivery_record.get("article_url", ""),
-                "board": delivery_record.get("board", "HardwareSale"),
-                "title": delivery_record.get("title", "已售出商品"),
-                "author": delivery_record.get("author", "未知"),
-                "date": "",
-                "category": "賣",
-                "nrec": "-",
-            }
-            sold_embed = build_article_embed(
-                art_stub,
-                matched_keywords=[],
-                detail=detail,
-                is_sold_update=True,
-            )
+            existing_embeds = getattr(msg, "embeds", None)
+            if (
+                existing_embeds
+                and isinstance(existing_embeds, (list, tuple))
+                and len(existing_embeds) > 0
+                and isinstance(existing_embeds[0], discord.Embed)
+            ):
+                sold_embed = update_existing_embed_for_sold(
+                    existing_embeds[0],
+                    detail=detail,
+                    board=delivery_record.get("board", "HardwareSale"),
+                    fallback_title=delivery_record.get("title", "已售出商品"),
+                )
+            else:
+                art_stub = {
+                    "url": delivery_record.get("article_url", ""),
+                    "board": delivery_record.get("board", "HardwareSale"),
+                    "title": delivery_record.get("title", "已售出商品"),
+                    "author": delivery_record.get("author", "未知"),
+                    "date": "",
+                    "category": "賣",
+                    "nrec": "-",
+                }
+                mkw = delivery_record.get("matched_keyword")
+                sold_embed = build_article_embed(
+                    art_stub,
+                    matched_keywords=[mkw] if mkw else [],
+                    detail=detail,
+                    is_sold_update=True,
+                )
             await msg.edit(embed=sold_embed)
             return True
+        except (discord.NotFound, discord.Forbidden) as e:
+            logger.warning(
+                f"更新 Discord 已售出訊息 ({msg_id}) 遭拒或已刪除，標記 edit_failed=1 不再重試: {e}"
+            )
+            d_id = delivery_record.get("id")
+            if d_id is not None and self.storage and hasattr(self.storage, "mark_delivery_edit_failed"):
+                self.storage.mark_delivery_edit_failed(int(d_id))
+            return False
         except Exception as e:
             logger.debug(f"更新 Discord 已售出訊息 ({msg_id}) 略過: {e}")
             return False
@@ -503,24 +536,61 @@ class DeliveryManager:
 
             checked_urls += 1
             sample = deliveries[0]
-            detail = await self.crawler.fetch_article_full_detail(
+            base_detail = await self.crawler.fetch_article_full_detail(
                 url,
                 article_title=sample.get("title", ""),
                 article_author=sample.get("author", ""),
                 force_refresh=True,
             )
-            if not detail.get("is_sold"):
+
+            fetch_status = base_detail.get("fetch_status", 200)
+            is_deleted_404 = bool(base_detail.get("deleted") or fetch_status == 404)
+
+            # Transient HTTP failure (e.g., timeout / 5xx / cooldown): rotate URL to back of queue
+            if not is_deleted_404 and fetch_status != 200 and not base_detail.get("is_sold"):
                 self.storage.touch_delivery_sold_check(url)
                 continue
 
-            self.storage.mark_delivery_sold(url)
-
             for d_row in deliveries:
+                d_id = d_row.get("id")
+                target_ref = d_id if d_id is not None else url
+
+                if is_deleted_404:
+                    item_detail = dict(base_detail)
+                    item_detail["is_sold"] = True
+                    item_detail["deleted"] = True
+                    item_detail["sold_state"] = "DELETED"
+                    item_detail["sold_reason"] = (
+                        base_detail.get("sold_reason") or "原文已刪除或不存在 (404)"
+                    )
+                else:
+                    kw = d_row.get("matched_keyword") or ""
+                    item_detail = PTTCrawler.apply_keyword_view(base_detail, kw)
+
+                if not item_detail.get("is_sold") and not item_detail.get("deleted"):
+                    self.storage.touch_delivery_sold_check(target_ref)
+                    continue
+
+                state_to_save = (
+                    item_detail.get("sold_state")
+                    or ("DELETED" if is_deleted_404 else "SOLD")
+                )
                 sub = self.storage.get_subscriber_by_id(d_row["subscriber_id"])
                 if not sub:
+                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
                     continue
-                ok = await self.dispatcher.dispatch_sold_update(sub, d_row, detail)
+
+                platform = str(sub.get("platform") or "discord").lower().strip()
+                if platform == "email":
+                    # Supplemental Rule #3: Email is non-editable (N/A); mark sold without error or retry
+                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
+                    continue
+
+                ok = await self.dispatcher.dispatch_sold_update(sub, d_row, item_detail)
                 if ok:
+                    self.storage.mark_delivery_sold(target_ref, sold_state=state_to_save)
                     updated_count += 1
+                else:
+                    self.storage.touch_delivery_sold_check(target_ref)
 
         return updated_count
