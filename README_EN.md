@@ -52,7 +52,7 @@ Most existing PTT alert solutions (such as PttAlertor, RSS bots, or basic webhoo
 ## Quick Start & Deployment: 3 Streamlined Options
 
 Before running the bot, please prepare the free credentials for your preferred notification platform(s):
-1. **Discord Bot Token (if using Discord)**: Open the [Discord Developer Portal](https://discord.com/developers/applications), create an Application, navigate to the **Bot** tab, and click **Reset Token**. Ensure **Message Content Intent** is enabled under Privileged Gateway Intents.
+1. **Discord Bot Token (if using Discord)**: Open the [Discord Developer Portal](https://discord.com/developers/applications), create an Application, navigate to the **Bot** tab, and click **Reset Token**. **Privileged Gateway Intents, including Message Content Intent, do not need to be enabled**: Discord natively provides message content for DMs, explicit `@Bot` mentions, and Slash commands.
 2. **Telegram Bot Token (if using Telegram)**: Open Telegram, message [@BotFather](https://t.me/BotFather), run `/newbot`, and copy the HTTP API token provided.
 3. **Gmail App Password (if using Email SMTP)**: In your Google Account, enable 2-Step Verification and generate a 16-character [App Password](https://myaccount.google.com/apppasswords).
 4. **Groq API Key (Optional)**: Sign up at [Groq Console](https://console.groq.com/keys) and click **Create API Key** (starts with `gsk_...`) for natural language AI assistance and semantic filtering.
@@ -227,7 +227,7 @@ PTT-DC-Bot supports modular notification delivery. You may configure any combina
   - `Embed Links` (required for notification cards)
   - `Read Message History`
 
-> **[Critical Note]**: Make sure to visit the [Discord Developer Portal](https://discord.com/developers/applications) -> Your Bot -> **Bot** tab -> **Privileged Gateway Intents**, enable **Message Content Intent**, and save changes. Without this intent, the bot cannot process conversational commands or direct messages.
+> **[Important]**: Do **not** enable Privileged Gateway Intents for this bot. Discord natively provides message content for DMs, explicit `@Bot` mentions, and Slash commands, so Message Content Intent is not required.
 
 ---
 
@@ -641,14 +641,23 @@ ptt-dc-bot/
 ├── start_windows.bat          # Windows double-click launcher with crash recovery loop
 ├── start_mac.command          # macOS double-click launcher
 ├── config.py                  # Environment validation, multi-platform flags, and sanitization
-├── storage.py                 # SQLite WAL multi-tenant database (schema v4), migrations, backups
+├── sold_rules.py              # Sold-state detection rules
+├── boards.py                  # Board validation and aliases
+├── boards.json                # Supported board list
+├── timeutil.py                # Taipei timezone utilities
+├── storage.py                 # SQLite WAL multi-tenant database (Schema v5), migrations, backups
 ├── ptt_crawler.py             # Async PTT crawler, dual-layer sold detection, per-item virtual views
 ├── groq_scheduler.py          # Priority queue (P0~P3) and dynamic 3-model rate-limit scheduler
 ├── groq_agent.py              # ReAct AI agent, tool execution guards, and prompt injection defense
 ├── embeds.py                  # Discord Embed formatting, character limit truncation, pagination
 ├── docs/
-│   ├── MULTI_PLATFORM_FEASIBILITY.md # Feasibility study for LINE, Telegram, and Email
-│   └── RELEASE_NOTES_v1.0.0.md       # v1.0.0 official release notes
+│   ├── deploy-docker.md              # Docker Compose and GHCR deployment
+│   ├── deploy-synology.md             # Synology Container Manager deployment
+│   ├── deploy-unraid.md               # unRAID Docker template deployment
+│   ├── deploy-linux.md                # Linux systemd and tmux deployment
+│   ├── MULTI_PLATFORM_FEASIBILITY.md  # Feasibility study for LINE, Telegram, and Email
+│   └── RELEASE_NOTES_v1.0.0.md        # v1.0.0 official release notes
+├── PRIVACY.md                  # Data handling and deletion rights
 ├── Dockerfile                 # Python 3.11-slim container image definition (non-root execution)
 ├── docker-compose.yml         # Multi-arch container orchestration and ./data volume persistence
 ├── .dockerignore              # 26 exclusion rules preventing credentials, logs, and cache packaging

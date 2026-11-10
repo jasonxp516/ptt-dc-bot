@@ -776,8 +776,8 @@ def run_wizard(env_path: Optional[str] = None) -> bool:
         print("  1. 前往 Discord 開發者入口: https://discord.com/developers/applications")
         print("  2. 建立或選擇您的 Application，點選左側「Bot」分頁")
         print("  3. 點選「Reset Token」獲取金鑰並複製")
-        print("  4. [注意] 請務必在同一頁面下方的「Privileged Gateway Intents」中勾選：")
-        print("     - MESSAGE CONTENT INTENT (必須開啟才能正常運作)\n")
+        print("  4. [提示] 無需開啟任何「Privileged Gateway Intents」（包含 MESSAGE CONTENT INTENT）：")
+        print("     - 本機器人僅使用 Slash 指令、私訊 (DM) 與 @Bot 提及，Discord 官方預設即提供完整訊息內容\n")
 
         candidate_token = prefilled_discord_token
         while True:

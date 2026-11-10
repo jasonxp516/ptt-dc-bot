@@ -10,6 +10,7 @@ staging*
 *.db*
 *.db-*
 *.db.bak*
+heartbeat
 backups/
 data/
 *.log

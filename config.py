@@ -88,6 +88,10 @@ GROQ_FAST_MODEL = os.getenv("GROQ_FAST_MODEL", "openai/gpt-oss-20b").strip()
 
 DB_PATH = os.getenv("DB_PATH", os.path.join(BASE_DIR, "bot_data.db")).strip()
 LOG_PATH = os.getenv("LOG_PATH", os.path.join(BASE_DIR, "bot.log")).strip()
+HEARTBEAT_FILE = os.getenv(
+    "HEARTBEAT_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or BASE_DIR, "heartbeat"),
+).strip()
 
 # Active Groq models (each has its own 8,000 TPM / 1,000 RPD free-tier bucket)
 ALTERNATING_MODELS_POOL = [

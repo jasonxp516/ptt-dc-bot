@@ -215,7 +215,22 @@ class PTTDiscordBot(discord.Client):
         self._last_board_alert_ts: Dict[str, float] = {}
         self.detected_owner_id: str = str(OWNER_USER_ID or "")
 
+    def _write_heartbeat(self) -> None:
+        hb_path = os.getenv("HEARTBEAT_FILE", "").strip()
+        if not hb_path:
+            db_p = getattr(self.storage, "db_path", None)
+            if isinstance(db_p, str) and db_p and db_p != ":memory:":
+                hb_path = os.path.join(os.path.dirname(os.path.abspath(db_p)), "heartbeat")
+        if not hb_path:
+            return
+        try:
+            with open(hb_path, "w", encoding="utf-8") as f:
+                f.write(str(int(time.time())))
+        except Exception as e:
+            logger.debug(f"寫入 heartbeat 失敗: {e}")
+
     async def setup_hook(self) -> None:
+        self._write_heartbeat()
         try:
             self.add_view(SetupPanelView(bot_instance=self, timeout=None))
         except Exception as e:
@@ -641,6 +656,7 @@ class PTTDiscordBot(discord.Client):
                 ]
 
             if not boards:
+                self._write_heartbeat()
                 return summary
 
             enabled_subs = self.storage.get_all_enabled_subscribers()
@@ -903,6 +919,8 @@ class PTTDiscordBot(discord.Client):
                 await self.delivery.check_sold_deliveries_once(max_checks=2)
             except Exception as e:
                 logger.debug(f"已售出狀態追蹤檢查略過: {e}")
+
+            self._write_heartbeat()
 
         return summary
 
