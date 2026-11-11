@@ -47,6 +47,8 @@ ENABLE_EMAIL = _parse_bool(
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 TELEGRAM_ADMIN_USER_ID = os.getenv("TELEGRAM_ADMIN_USER_ID", "").strip()
+# Telegram user IDs (comma separated) the bot ignores completely
+TELEGRAM_BLOCKED_USER_IDS = os.getenv("TELEGRAM_BLOCKED_USER_IDS", "").strip()
 
 # ---------------------------------------------------------------------
 # Email SMTP 平台組態 (Email SMTP Configuration)

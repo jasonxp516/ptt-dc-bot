@@ -12,6 +12,7 @@ from config import ALTERNATING_MODELS_POOL
 logger = logging.getLogger("groq_scheduler")
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
 
 P0_INTERACTIVE = 0
 P1_REALTIME = 1
@@ -62,6 +63,8 @@ class ModelBucket:
     usage_count: int = 0
     in_flight: int = 0
     in_flight_tokens: int = 0
+    # T5: set when Groq's model list does not contain this model (until restart)
+    disabled: bool = False
 
     def update_from_headers(self, headers: Any) -> None:
         now = time.time()
@@ -97,6 +100,9 @@ class ModelBucket:
         Fix P1-7: When `in_flight >= 1` and `allow_shared=False`, prefer another idle model first
         so concurrent workers naturally distribute across our 3 models in parallel.
         """
+        if self.disabled:
+            return False, float("inf")
+
         if now < self.cooldown_until:
             return False, self.cooldown_until - now
 
@@ -173,6 +179,51 @@ class GroqScheduler:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    async def probe_models(self) -> List[str]:
+        """
+        T5: Ask Groq which models exist and disable the configured ones that are missing, so a
+        retired model is reported once at startup instead of failing on every request.
+        Returns the missing model names. Any error (network, auth) leaves all models enabled.
+        """
+        if not self.api_key:
+            return []
+        try:
+            session = await self._get_session()
+            async with session.get(
+                GROQ_MODELS_URL,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(f"[GroqScheduler] 無法取得模型列表 (HTTP {resp.status})，略過模型檢查")
+                    return []
+                data = await resp.json()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"[GroqScheduler] 模型列表檢查失敗，略過: {e}")
+            return []
+
+        rows = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(rows, list) or not rows:
+            return []
+        available = {str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")}
+        if not available:
+            return []
+        missing: List[str] = []
+        for name, bucket in self.buckets.items():
+            if name not in available:
+                bucket.disabled = True
+                missing.append(name)
+        if missing:
+            logger.error(
+                f"[GroqScheduler] 以下模型已不在 Groq 模型列表中，已停用: {', '.join(missing)}。"
+                f"請在 .env 以 GROQ_MODELS 指定可用模型。"
+            )
+            if len(missing) == len(self.buckets):
+                logger.error("[GroqScheduler] 所有設定的模型皆不可用，AI 功能已停用，改用純規則模式")
+        return missing
+
     def acquire_user_slot(self, user_id: str, kind: str = "ai") -> bool:
         key = (str(user_id), kind)
         if self._active_user_tasks.get(key, 0) >= 1:
@@ -199,6 +250,7 @@ class GroqScheduler:
                 "rem_req": b.remaining_requests,
                 "in_flight": b.in_flight,
                 "cooldown": max(0, int(b.cooldown_until - now)),
+                "disabled": b.disabled,
             }
         return {
             "queue_size": q_size,
@@ -367,7 +419,7 @@ class GroqScheduler:
                     )
                 # R02: no model can become available before the deadline -> fail now instead of
                 # sleeping until the deadline (which stalled the poll loop for 120s per article).
-                if min_wait != float("inf") and min_wait > remaining_budget:
+                if min_wait > remaining_budget:
                     raise GroqBusyError(
                         f"所有 AI 模型目前皆處於額度冷卻或忙碌中，最快需 {min_wait:.0f}s 後恢復，"
                         f"超過任務期限，請稍後再試。"

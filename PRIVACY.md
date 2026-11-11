@@ -10,6 +10,8 @@ deduplication, and short-term conversations survive restarts.
 - Short-term AI conversation memory, retained for 30 minutes and limited to
   the most recent 6 turns.
 - `seen_articles` and delivery history, retained for 14 days.
+- Notifications waiting for a retry after a failed send, retained for at most
+  24 hours.
 
 ## External services
 
@@ -21,7 +23,12 @@ deduplication, and short-term conversations survive restarts.
 
 ## Deletion rights
 
-Run `/forget_me` to immediately and permanently delete your personal rules,
-delivery records, and conversation memory for that user. This does not delete
-server-wide rules owned by other subscribers or the public PTT pages.
+Run `/forget_me` (available on both Discord and Telegram) to immediately and
+permanently delete your personal rules, delivery records, queued notifications,
+and conversation memory for that user. In a Telegram group the command is
+limited to group administrators and deletes that group's shared data. This does
+not delete server-wide rules owned by other subscribers or the public PTT pages.
+
+Daily database backups are kept for at most 7 days. Data removed with
+`/forget_me` disappears from the backups as they rotate out.
 

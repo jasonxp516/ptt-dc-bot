@@ -38,6 +38,11 @@ _USAGE_KIND_MAP = {
 }
 
 
+# F01: retry schedule for notifications that could not be sent (seconds after each failure)
+PENDING_DELIVERY_BACKOFF_SEC = (120, 300, 900, 1800, 3600)
+PENDING_DELIVERY_MAX_AGE_SEC = 86400
+
+
 def compute_dedupe_hash(board: str, author: str, title: str) -> str:
     norm_title = re.sub(r"[\s\[\]/\-_、，,]+", "", title.lower())
     raw = f"{board.lower()}:{author.lower()}:{norm_title}"
@@ -365,6 +370,30 @@ class BotStorage:
                             pass
                 self._run_schema_next_migration(cur, target_next_ver)
                 self._conn.commit()
+
+            # v1.3.0 (F01): additive retry queue for notifications that could not be sent.
+            # Created idempotently without touching user_version, so older releases can still
+            # open the database (they simply ignore the extra table).
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pending_deliveries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subscriber_id INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
+                    article_url TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 1,
+                    next_attempt_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    UNIQUE(subscriber_id, article_url)
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_pending_deliveries_due "
+                "ON pending_deliveries(subscriber_id, next_attempt_at)"
+            )
+            self._conn.commit()
 
     def _run_schema_v2_migration(self, cur: sqlite3.Cursor) -> None:
         now_str = now_tpe_str()
@@ -1166,7 +1195,11 @@ class BotStorage:
             self._conn.execute("DELETE FROM keywords WHERE subscriber_id = ?", (sub_id,))
             self._conn.execute("DELETE FROM fuzzy_rules WHERE subscriber_id = ?", (sub_id,))
             self._conn.execute("DELETE FROM deliveries WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute("DELETE FROM pending_deliveries WHERE subscriber_id = ?", (sub_id,))
             self._conn.execute("DELETE FROM usage_counters WHERE subscriber_id = ?", (sub_id,))
+            self._conn.execute(
+                "DELETE FROM settings WHERE key = ?", (f"email_copy:{int(sub_id)}",)
+            )
             self._conn.execute("DELETE FROM subscribers WHERE id = ?", (sub_id,))
             if row["scope"] == "user":
                 did = row["discord_id"]
@@ -2042,6 +2075,145 @@ class BotStorage:
             )
             self._conn.commit()
 
+    def has_delivery_record(self, subscriber_id: int, article_url: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM deliveries WHERE subscriber_id = ? AND article_url = ? LIMIT 1",
+                (int(subscriber_id), str(article_url)),
+            ).fetchone()
+            return row is not None
+
+    def count_open_followup_urls(self, max_age_hours: int = 18) -> int:
+        """Number of distinct delivered articles still being watched for a sold update."""
+        cutoff = int(time.time()) - (max_age_hours * 3600)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(DISTINCT article_url) AS cnt FROM deliveries
+                WHERE sold_marked = 0 AND COALESCE(edit_failed, 0) = 0
+                  AND message_id IS NOT NULL AND delivered_at >= ?
+                """,
+                (cutoff,),
+            ).fetchone()
+            return int(row["cnt"]) if row else 0
+
+    # =====================================================================
+    # Pending Delivery Retry Queue (F01)
+    # =====================================================================
+    def note_pending_failure(
+        self, subscriber_id: int, item: Dict[str, Any], error: str = ""
+    ) -> bool:
+        """
+        Record that `item` could not be delivered to `subscriber_id`.
+        First failure queues it (retry in 2 minutes); later failures back off
+        (5 / 15 / 30 / 60 minutes). After the last retry also fails the row is dropped.
+        Returns True while the item is still queued for another attempt.
+        """
+        art = (item or {}).get("article") or {}
+        url = str(art.get("url") or "")
+        if not url:
+            return False
+        now_ts = int(time.time())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, attempts FROM pending_deliveries WHERE subscriber_id = ? AND article_url = ?",
+                (int(subscriber_id), url),
+            ).fetchone()
+            if row is None:
+                payload = dict(item)
+                detail = payload.get("detail")
+                if isinstance(detail, dict):
+                    detail = dict(detail)
+                    for big_key in ("full_body", "body_only"):
+                        if isinstance(detail.get(big_key), str):
+                            detail[big_key] = detail[big_key][:2000]
+                    payload["detail"] = detail
+                self._conn.execute(
+                    """
+                    INSERT INTO pending_deliveries
+                        (subscriber_id, article_url, payload_json, attempts, next_attempt_at, created_at, last_error)
+                    VALUES (?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        int(subscriber_id),
+                        url,
+                        json.dumps(payload, ensure_ascii=False, default=str),
+                        now_ts + PENDING_DELIVERY_BACKOFF_SEC[0],
+                        now_ts,
+                        str(error)[:300],
+                    ),
+                )
+                self._conn.commit()
+                return True
+            attempts = int(row["attempts"]) + 1
+            if attempts > len(PENDING_DELIVERY_BACKOFF_SEC):
+                self._conn.execute(
+                    "DELETE FROM pending_deliveries WHERE id = ? AND subscriber_id = ?",
+                    (row["id"], int(subscriber_id)),
+                )
+                self._conn.commit()
+                return False
+            self._conn.execute(
+                """
+                UPDATE pending_deliveries
+                SET attempts = ?, next_attempt_at = ?, last_error = ?
+                WHERE id = ? AND subscriber_id = ?
+                """,
+                (
+                    attempts,
+                    now_ts + PENDING_DELIVERY_BACKOFF_SEC[attempts - 1],
+                    str(error)[:300],
+                    row["id"],
+                    int(subscriber_id),
+                ),
+            )
+            self._conn.commit()
+            return True
+
+    def get_due_pending_deliveries(
+        self, subscriber_id: int, now_ts: Optional[int] = None, limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Queued items of ONE subscriber whose retry time has come (oldest first)."""
+        now_val = int(time.time()) if now_ts is None else int(now_ts)
+        cutoff = now_val - PENDING_DELIVERY_MAX_AGE_SEC
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT article_url, payload_json, attempts FROM pending_deliveries
+                WHERE subscriber_id = ? AND next_attempt_at <= ? AND created_at >= ?
+                ORDER BY created_at ASC, id ASC LIMIT ?
+                """,
+                (int(subscriber_id), now_val, cutoff, int(limit)),
+            ).fetchall()
+        items: List[Dict[str, Any]] = []
+        for r in rows:
+            try:
+                payload = json.loads(r["payload_json"])
+            except Exception:
+                self.delete_pending_delivery(subscriber_id, r["article_url"])
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("article"), dict):
+                items.append(payload)
+            else:
+                self.delete_pending_delivery(subscriber_id, r["article_url"])
+        return items
+
+    def delete_pending_delivery(self, subscriber_id: int, article_url: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM pending_deliveries WHERE subscriber_id = ? AND article_url = ?",
+                (int(subscriber_id), str(article_url)),
+            )
+            self._conn.commit()
+
+    def count_pending_deliveries(self, subscriber_id: int) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT COUNT(*) AS cnt FROM pending_deliveries WHERE subscriber_id = ?",
+                (int(subscriber_id),),
+            ).fetchone()
+            return int(row["cnt"]) if row else 0
+
     def get_recent_unmarked_deliveries(self, max_age_hours: int = 18, limit: int = 6) -> List[Dict]:
         """
         Fix P1-5 & ChatGPT #3:
@@ -2196,6 +2368,10 @@ class BotStorage:
             # Daily usage counters are only read for the current day; keep 30 days of history
             usage_cutoff = (now_tpe() - timedelta(days=30)).strftime("%Y-%m-%d")
             self._conn.execute("DELETE FROM usage_counters WHERE day < ?", (usage_cutoff,))
+            self._conn.execute(
+                "DELETE FROM pending_deliveries WHERE created_at < ?",
+                (now_ts - PENDING_DELIVERY_MAX_AGE_SEC,),
+            )
             self._conn.commit()
             rowcount = cur.rowcount
         self.prune_idle_boards(min_idle_seconds=86400)

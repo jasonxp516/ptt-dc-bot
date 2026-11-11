@@ -30,7 +30,16 @@ else
         else
             mkdir -p "$PROJECT_DIR"
             echo "[資訊] 未安裝 git，改透過 tarball 下載專案..."
-            curl -fsSL https://github.com/jasonxp516/ptt-dc-bot/archive/refs/heads/main.tar.gz | tar -xz -C "$PROJECT_DIR" --strip-components=1
+            # 優先下載最新正式版；查詢失敗時退回 main 分支
+            LATEST_TAG="$(curl -fsSL https://api.github.com/repos/jasonxp516/ptt-dc-bot/releases/latest 2>/dev/null | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+            if [ -n "$LATEST_TAG" ]; then
+                echo "[資訊] 下載最新正式版: $LATEST_TAG"
+                TARBALL_URL="https://github.com/jasonxp516/ptt-dc-bot/archive/refs/tags/${LATEST_TAG}.tar.gz"
+            else
+                echo "[提示] 無法查詢最新正式版，改下載 main 分支"
+                TARBALL_URL="https://github.com/jasonxp516/ptt-dc-bot/archive/refs/heads/main.tar.gz"
+            fi
+            curl -fsSL "$TARBALL_URL" | tar -xz -C "$PROJECT_DIR" --strip-components=1
         fi
     else
         echo "[資訊] 目標目錄已存在，直接在此目錄更新與安裝..."

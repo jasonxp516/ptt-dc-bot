@@ -656,8 +656,17 @@ class TelegramBot:
         crawler: Optional[Any] = None,
         delivery: Optional[Any] = None,
         admin_user_ids: Optional[List[str]] = None,
+        blocked_user_ids: Optional[List[str]] = None,
     ):
         self.token = token.strip()
+        if blocked_user_ids is None:
+            import config as _config_b
+
+            raw_blocked = getattr(_config_b, "TELEGRAM_BLOCKED_USER_IDS", "") or ""
+            blocked_user_ids = [
+                x.strip() for x in str(raw_blocked).replace(";", ",").split(",") if x.strip()
+            ]
+        self.blocked_user_ids = {str(x) for x in blocked_user_ids}
         if admin_user_ids is None:
             import config as _config
 
@@ -702,10 +711,12 @@ class TelegramBot:
             {"command": "start", "description": "註冊並開啟推播服務"},
             {"command": "keyword_add", "description": "新增關鍵字追蹤"},
             {"command": "keyword_list", "description": "查看目前追蹤關鍵字"},
+            {"command": "keyword_remove", "description": "依編號刪除關鍵字"},
             {"command": "pause", "description": "暫停推播通知"},
             {"command": "resume", "description": "恢復推播通知"},
             {"command": "status", "description": "查看系統狀態與監控看板"},
             {"command": "me", "description": "查看個人訂閱資訊與配額"},
+            {"command": "forget_me", "description": "永久刪除此對話的所有資料"},
             {"command": "help", "description": "顯示完整使用說明手冊"},
         ]
         await self.api.set_my_commands(commands)
@@ -769,6 +780,20 @@ class TelegramBot:
         self._admin_cache[key] = (now, allowed)
         return allowed
 
+    def _is_blocked(self, user: Optional[Dict[str, Any]]) -> bool:
+        """R06: blocked users (TELEGRAM_BLOCKED_USER_IDS or the database blacklist) get no response."""
+        uid = str((user or {}).get("id") or "")
+        if not uid:
+            return False
+        if uid in self.blocked_user_ids:
+            return True
+        if self.storage is not None:
+            try:
+                return self.storage.is_blacklisted(f"telegram_{uid}") is True
+            except Exception:
+                return False
+        return False
+
     async def _deny_write(self, chat_id: Union[int, str]) -> None:
         await self.api.send_message(
             chat_id,
@@ -784,6 +809,8 @@ class TelegramBot:
         if not chat or not isinstance(chat, dict) or not chat.get("id"):
             return
         user = message.get("from")
+        if self._is_blocked(user):
+            return
         sub = self._resolve_subscriber(chat, user)
         chat_id = chat["id"]
 
@@ -793,7 +820,15 @@ class TelegramBot:
         cmd = raw_cmd.split("@")[0]
         args = parts[1:]
 
-        if cmd in ("/keyword_add", "/add", "/pause", "/resume") and not await self._can_write(
+        if cmd in (
+            "/keyword_add",
+            "/add",
+            "/pause",
+            "/resume",
+            "/keyword_remove",
+            "/remove",
+            "/forget_me",
+        ) and not await self._can_write(
             chat, user
         ):
             await self._deny_write(chat_id)
@@ -807,6 +842,10 @@ class TelegramBot:
             await self._cmd_keyword_add(chat_id, sub, args)
         elif cmd in ("/keyword_list", "/list"):
             await self._cmd_keyword_list(chat_id, sub)
+        elif cmd in ("/keyword_remove", "/remove"):
+            await self._cmd_keyword_remove(chat_id, sub, args)
+        elif cmd == "/forget_me":
+            await self._cmd_forget_me(chat_id, sub)
         elif cmd == "/pause":
             if self.storage:
                 self.storage.set_subscriber_enabled(sub["id"], False)
@@ -831,9 +870,11 @@ class TelegramBot:
             "<b>常用指令列表：</b>\n"
             "• <code>/keyword_add &lt;看板&gt; &lt;分類&gt; &lt;關鍵字&gt; [預算]</code> - 新增關鍵字\n"
             "• <code>/keyword_list</code> - 查看並管理已設定關鍵字\n"
+            "• <code>/keyword_remove &lt;編號&gt;</code> - 依清單編號刪除關鍵字\n"
             "• <code>/pause</code> 與 <code>/resume</code> - 切換推播開關\n"
             "• <code>/status</code> - 檢視看板監控即時狀態\n"
             "• <code>/me</code> - 檢視個人配額與訂閱資料\n"
+            "• <code>/forget_me</code> - 永久刪除此對話的所有資料\n"
             "• <code>/help</code> - 取得詳細說明"
         )
         await self.api.send_message(chat_id, welcome_text, parse_mode="HTML")
@@ -847,12 +888,15 @@ class TelegramBot:
             "• 簡化語法 (預設 HardwareSale 賣)：\n"
             "  範例：<code>/keyword_add 4070Super 18000</code>\n\n"
             "<b>2. 管理追蹤清單：</b>\n"
-            "• <code>/keyword_list</code>：列出目前所有規則，點擊按鈕即可一鍵刪除。\n\n"
+            "• <code>/keyword_list</code>：列出目前所有規則，點擊按鈕即可一鍵刪除。\n"
+            "• <code>/keyword_remove &lt;編號&gt;</code>：依 /keyword_list 顯示的 #編號 刪除。\n\n"
             "<b>3. 系統與推播控制：</b>\n"
             "• <code>/pause</code>：暫停通知\n"
             "• <code>/resume</code>：重啟通知\n"
             "• <code>/status</code>：查看各看板連線與更新狀態\n"
-            "• <code>/me</code>：查看今日配額與規則上限"
+            "• <code>/me</code>：查看今日配額與規則上限\n\n"
+            "<b>4. 資料刪除：</b>\n"
+            "• <code>/forget_me</code>：永久刪除此對話的關鍵字、推播紀錄與訂閱資料（群組限管理員）"
         )
         await self.api.send_message(chat_id, help_text, parse_mode="HTML")
 
@@ -902,6 +946,52 @@ class TelegramBot:
 
         prefix = "[成功]" if ok else "[錯誤]"
         await self.api.send_message(chat_id, f"{prefix} {escape_tg(msg)}", parse_mode="HTML")
+
+    async def _cmd_keyword_remove(
+        self, chat_id: Union[int, str], sub: Dict[str, Any], args: List[str]
+    ) -> None:
+        if not self.storage:
+            await self.api.send_message(chat_id, "[錯誤] 資料庫尚未連線", parse_mode="HTML")
+            return
+        ident = (args[0] if args else "").lstrip("#").strip()
+        if not ident:
+            await self.api.send_message(
+                chat_id,
+                "[錯誤] 請提供要刪除的關鍵字編號，例如 <code>/keyword_remove 12</code>"
+                "（編號可用 /keyword_list 查看）",
+                parse_mode="HTML",
+            )
+            return
+        removed = self.storage.remove_keyword(ident, subscriber_id=sub["id"])
+        if removed:
+            await self.api.send_message(
+                chat_id,
+                f"[成功] 已刪除關鍵字「{escape_tg(removed['keyword'])}」",
+                parse_mode="HTML",
+            )
+        else:
+            await self.api.send_message(
+                chat_id, "[提示] 找不到這個編號的關鍵字，請用 /keyword_list 確認編號。", parse_mode="HTML"
+            )
+
+    async def _cmd_forget_me(self, chat_id: Union[int, str], sub: Dict[str, Any]) -> None:
+        """R06: ask for confirmation; the actual deletion happens in the callback handler."""
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "確認永久刪除", "callback_data": f"forget_yes:{sub['id']}"},
+                    {"text": "取消", "callback_data": "forget_no"},
+                ]
+            ]
+        }
+        await self.api.send_message(
+            chat_id,
+            "<b>[確認] 即將永久刪除此對話的所有資料</b>\n"
+            "包含追蹤關鍵字、推播紀錄與訂閱設定，刪除後無法復原。\n"
+            "確定要刪除嗎？",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
 
     async def _cmd_keyword_list(
         self, chat_id: Union[int, str], sub: Dict[str, Any]
@@ -990,11 +1080,37 @@ class TelegramBot:
         chat_id = chat.get("id")
         user = cb.get("from", {})
 
+        if self._is_blocked(user):
+            return
+
         if not chat_id:
             await self.api.answer_callback_query(cb_id, text="[錯誤] 無效操作")
             return
 
+        if data == "forget_no":
+            await self.api.answer_callback_query(cb_id, text="[資訊] 已取消，資料未變更")
+            return
+
         sub = self._resolve_subscriber(chat, user)
+
+        if data.startswith("forget_yes:"):
+            if not await self._can_write(chat, user):
+                await self.api.answer_callback_query(
+                    cb_id, text="[權限不足] 僅限群組管理員刪除群組資料", show_alert=True
+                )
+                return
+            # The button must belong to THIS chat's subscriber (never trust the id in the payload)
+            if data.split(":", 1)[1] != str(sub["id"]) or not self.storage:
+                await self.api.answer_callback_query(cb_id, text="[錯誤] 此確認按鈕已失效")
+                return
+            self.storage.forget_subscriber_by_id(sub["id"])
+            await self.api.answer_callback_query(cb_id, text="[成功] 資料已永久刪除")
+            await self.api.send_message(
+                chat_id,
+                "[成功] 此對話的關鍵字、推播紀錄與訂閱資料已永久刪除。之後再次使用指令會建立全新的訂閱。",
+                parse_mode="HTML",
+            )
+            return
 
         if data.startswith("del_kw:"):
             if not await self._can_write(chat, user):

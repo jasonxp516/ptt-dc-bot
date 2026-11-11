@@ -8,7 +8,7 @@
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR%20Multi--Arch-2496ED?logo=docker&logoColor=white)](https://github.com/jasonxp516/ptt-dc-bot/pkgs/container/ptt-dc-bot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An asynchronous PTT (Taiwan Bulletin Board System) board monitor and multi-platform alert bot (supporting Discord and Telegram; Email SMTP is experimental: the mail provider is built in, but there is no command to create an Email subscription yet, so no mail is sent) combining deterministic rule filtering with Groq LLM semantic reasoning. Designed specifically for fast-moving second-hand trading boards (`HardwareSale`, `MacShop`, `nb-shopping`, `Gamesale`, `MobileComm`).
+An asynchronous PTT (Taiwan Bulletin Board System) board monitor and multi-platform alert bot (supporting Discord and Telegram, plus Email SMTP as a copy channel: after the owner runs `/email_copy`, every delivered alert is also mailed to `EMAIL_TO`) combining deterministic rule filtering with Groq LLM semantic reasoning. Designed specifically for fast-moving second-hand trading boards (`HardwareSale`, `MacShop`, `nb-shopping`, `Gamesale`, `MobileComm`).
 
 ---
 
@@ -96,7 +96,8 @@ PTT-DC-Bot features an interactive native `/setup` dashboard—no need to memori
 | `/scan_unsold` | Back-scans recent board posts for currently available stock |
 | `/status` | Displays system uptime, crawler health, and Groq queue metrics |
 | `/pause` / `/resume` | Pauses or resumes alert notifications |
-| `/forget_me` | Permanently deletes your personal data, rules, and conversation memory |
+| `/forget_me` | Permanently deletes your personal data, rules, and conversation memory (also available on Telegram) |
+| `/email_copy` | (Owner only) Also mails every alert of the current scope to `EMAIL_TO` from `.env` |
 
 ---
 

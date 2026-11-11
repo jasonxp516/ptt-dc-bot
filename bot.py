@@ -430,6 +430,10 @@ class PTTDiscordBot(discord.Client):
         # F18–F19: Clean boot detection and Owner Welcome DM
         await self._check_and_send_owner_welcome()
 
+        if not getattr(self, "_models_probed", False):
+            self._models_probed = True
+            self._probe_task = asyncio.create_task(self._probe_groq_models())
+
         for guild in self.guilds:
             # Auto-detect owner ID from the primary home guild if OWNER_USER_ID is not set in .env
             if str(guild.id) == str(DEFAULT_GUILD_ID) and getattr(guild, "owner_id", None):
@@ -509,6 +513,10 @@ class PTTDiscordBot(discord.Client):
             f"看板 `{board_name}` 已連續 `{failures}` 次抓取失敗（最新狀態：`{status_msg}`）。\n"
             f"系統已自動保留 `seen_articles` 基準（不會重置或吞沒文章），將於下一輪繼續重試。"
         )
+        await self._send_owner_notice(alert_text)
+
+    async def _send_owner_notice(self, text: str) -> None:
+        """DM the bot owner; fall back to the default subscriber's push channel."""
         try:
             owner_uid = OWNER_USER_ID or self.detected_owner_id
             if owner_uid and str(owner_uid).isdigit():
@@ -517,13 +525,37 @@ class PTTDiscordBot(discord.Client):
                 )
                 if owner_user:
                     dm = owner_user.dm_channel or await owner_user.create_dm()
-                    await dm.send(alert_text)
+                    await dm.send(text)
                     return
             target = await self.resolve_push_channel(subscriber_id=1)
             if target:
-                await target.send(alert_text)
+                await target.send(text)
         except Exception as e:
-            logger.debug(f"發送看板異常警報略過: {e}")
+            logger.debug(f"發送擁有者通知略過: {e}")
+
+    def _alerted_board_set(self) -> set:
+        alerted = getattr(self, "_alerted_boards", None)
+        if alerted is None:
+            alerted = set()
+            self._alerted_boards = alerted
+        return alerted
+
+    async def _probe_groq_models(self) -> None:
+        """T5: check the configured Groq models once after login and tell the owner what is missing."""
+        try:
+            missing = await self.scheduler.probe_models()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"Groq 模型檢查略過: {e}")
+            return
+        if isinstance(missing, list) and missing:
+            await self._send_owner_notice(
+                "[警告] **Groq 模型設定需要更新**\n"
+                f"以下模型已不在 Groq 的模型列表中，已停用：`{', '.join(missing)}`\n"
+                "請在 `.env` 設定 `GROQ_MODELS`（逗號分隔的可用模型名稱）後重新啟動。"
+                "未更新前，機器人會改用其餘模型；若全部不可用則以純規則模式運作。"
+            )
 
     async def on_message(self, message: discord.Message) -> None:
         """
@@ -724,6 +756,14 @@ class PTTDiscordBot(discord.Client):
                 s["id"] for s in enabled_subs if s.get("push_mode") == "all"
             ]
 
+            # F01: before looking at new articles, re-send notifications that failed earlier
+            retry_pending = getattr(self.delivery, "retry_pending_deliveries", None)
+            if retry_pending is not None and not target_board:
+                try:
+                    summary["pushed"] += int(await retry_pending(enabled_subs) or 0)
+                except Exception as e:
+                    logger.warning(f"補送佇列處理失敗: {e}")
+
             retry_state = self._retry_state()
             if retry_state:
                 expire_before = time.time() - 2 * 86400
@@ -791,10 +831,18 @@ class PTTDiscordBot(discord.Client):
                         f"看板 {board_name} 抓取失敗 (連續 {failures} 次): {status_msg}"
                     )
                     if failures >= 5:
+                        self._alerted_board_set().add(board_name)
                         await self._send_board_failure_alert(
                             board_name, failures, status_msg
                         )
                     continue
+
+                # F06: tell the owner once when a board that raised a failure alert works again
+                if board_name in self._alerted_board_set():
+                    self._alerted_board_set().discard(board_name)
+                    await self._send_owner_notice(
+                        f"[資訊] **PTT 看板巡檢已恢復**\n看板 `{board_name}` 已恢復正常抓取，巡檢繼續進行。"
+                    )
 
                 # Baseline silently when a board is first initialized or resumed from 0-subscriber idle
                 if needs_reinit:
@@ -2902,6 +2950,83 @@ async def cmd_push_mode(
 
 
 @bot.tree.command(
+    name="email_copy",
+    description="（僅限擁有者）將目前範圍的推播同時寄一份到 .env 設定的 EMAIL_TO 信箱",
+)
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
+@app_commands.describe(
+    enabled="開啟或關閉 Email 副本",
+    scope="選擇要套用於「個人專屬追蹤」或「伺服器共用追蹤」",
+)
+@app_commands.choices(
+    enabled=[
+        app_commands.Choice(name="開啟", value="on"),
+        app_commands.Choice(name="關閉", value="off"),
+    ],
+    scope=SCOPE_CHOICES,
+)
+async def cmd_email_copy(
+    interaction: discord.Interaction, enabled: str, scope: str = "auto"
+):
+    # Owner only: the bot must never become a way to send mail on behalf of arbitrary users.
+    if not is_bot_owner(interaction.user.id):
+        await interaction.response.send_message(
+            "[權限不足] Email 副本僅限機器人擁有者設定。", ephemeral=True
+        )
+        return
+    sub, scope_label, err = resolve_interaction_subscriber(
+        interaction, scope_choice=scope, require_write_perm=True
+    )
+    if err or not sub:
+        await interaction.response.send_message(err or "[權限不足]", ephemeral=True)
+        return
+
+    setting_key = f"email_copy:{int(sub['id'])}"
+    if enabled == "off":
+        bot.storage.set_setting(setting_key, "0")
+        await interaction.response.send_message(
+            f"[資訊] 已關閉 **{scope_label}** 的 Email 副本。", ephemeral=True
+        )
+        return
+
+    provider = bot.delivery.dispatcher.get_provider("email")
+    recipients = list(getattr(provider, "default_to_emails", []) or []) if provider else []
+    if provider is None or not provider.is_configured() or not recipients:
+        await interaction.response.send_message(
+            "[錯誤] Email 尚未設定完成。請在 `.env` 設定 `ENABLE_EMAIL=true`、`SMTP_HOST`、"
+            "`SMTP_USER`、`SMTP_PASSWORD` 與 `EMAIL_TO` 後重新啟動機器人。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    from email.message import EmailMessage
+    from email.utils import formataddr
+
+    test_msg = EmailMessage()
+    test_msg["Subject"] = "[PTT-DC-Bot] Email 副本測試信"
+    test_msg["From"] = formataddr((provider.from_name, provider.from_addr or provider.user))
+    test_msg["To"] = ", ".join(recipients)
+    test_msg.set_content(
+        f"這是 PTT-DC-Bot 的測試信。\n{scope_label} 的推播之後會同時寄送到這個信箱。\n"
+        "若要停止，請在 Discord 執行 /email_copy 並選擇「關閉」。"
+    )
+    sent_ok = await asyncio.to_thread(provider._sync_send, recipients, test_msg)
+    if not sent_ok:
+        await interaction.followup.send(
+            "[錯誤] 測試信寄送失敗，Email 副本未開啟。詳細原因請查看機器人日誌（常見原因：應用程式密碼錯誤、SMTP 主機或連接埠不正確）。",
+            ephemeral=True,
+        )
+        return
+    bot.storage.set_setting(setting_key, "1")
+    await interaction.followup.send(
+        f"[成功] 已開啟 **{scope_label}** 的 Email 副本，測試信已寄至 `{', '.join(recipients)}`。",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(
     name="pause",
     description="暫停接收目前範圍的推播通知（保留所有已設定的關鍵字與模糊規則）",
 )
@@ -3367,7 +3492,16 @@ async def cmd_status(interaction: discord.Interaction, scope: str = "auto"):
     model_parts = []
     for m_short, m_info in q_status["models"].items():
         model_parts.append(
-            f"`{m_short}`: {m_info['used']}次 (餘{m_info['rem_tok']}tok)"
+            f"`{m_short}`: "
+            + (
+                "已停用"
+                if m_info.get("disabled")
+                else (
+                    f"{m_info['used']}次 (餘{m_info['rem_tok']}tok"
+                    + (f"，冷卻 {m_info['cooldown']}s" if m_info.get("cooldown") else "")
+                    + ")"
+                )
+            )
         )
     embed.add_field(
         name=f"Groq 排程佇列 (排隊:{q_status['queue_size']})",

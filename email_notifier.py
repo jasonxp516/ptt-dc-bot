@@ -448,10 +448,12 @@ class EmailNotificationProvider(BaseNotificationProvider):
         self,
         subscriber: Dict[str, Any],
         items: List[Dict[str, Any]],
+        record: bool = True,
     ) -> int:
         """
         將已過濾之命中文章以非同步 SMTP 發送至訂閱者所設定之信箱。
         回傳成功發送數。
+        `record=False`（Email 副本模式）：文章已由主要平台寫入投遞紀錄，此處不重複記錄。
         """
         if not items:
             return 0
@@ -484,7 +486,7 @@ class EmailNotificationProvider(BaseNotificationProvider):
             msg = self._build_single_article_message(subscriber, it, to_addrs, scope_label)
             ok = await asyncio.to_thread(self._sync_send, to_addrs, msg)
             if ok:
-                if self.storage and sub_id is not None:
+                if record and self.storage and sub_id is not None:
                     self.storage.record_delivery(
                         subscriber_id=sub_id,
                         article=art,
@@ -503,7 +505,7 @@ class EmailNotificationProvider(BaseNotificationProvider):
         if overflow_slice and pushed > 0:
             ov_msg = self._build_overflow_message(subscriber, overflow_slice, to_addrs, scope_label)
             ov_ok = await asyncio.to_thread(self._sync_send, to_addrs, ov_msg)
-            if ov_ok and self.storage and sub_id is not None:
+            if ov_ok and record and self.storage and sub_id is not None:
                 for it in overflow_slice:
                     self.storage.record_delivery(
                         subscriber_id=sub_id,

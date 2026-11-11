@@ -392,17 +392,100 @@ class DeliveryDispatcher:
                 logger.info(
                     f"[Dedupe] 略過重複上架/已推播文章 (Sub#{sub_id}, 平台={platform}): {art.get('title')}"
                 )
+                # A queued retry that turns out to be a duplicate must leave the queue
+                if hasattr(self.storage, "delete_pending_delivery"):
+                    try:
+                        self.storage.delete_pending_delivery(sub_id, art.get("url", ""))
+                    except Exception:
+                        pass
                 continue
             filtered_items.append(it)
 
         if not filtered_items:
             return 0
 
+        pushed = 0
+        err_text = ""
         try:
-            return await provider.deliver(subscriber, filtered_items)
+            pushed = await provider.deliver(subscriber, filtered_items)
         except Exception as e:
             logger.error(f"推播分發失敗 (平台={platform}, Sub#{sub_id}): {e}", exc_info=True)
-            return 0
+            err_text = str(e)
+
+        delivered_items = self._settle_pending(sub_id, platform, filtered_items, err_text)
+        if delivered_items:
+            await self._send_email_copy(subscriber, platform, delivered_items)
+        return pushed
+
+    def _settle_pending(
+        self,
+        sub_id: Any,
+        platform: str,
+        items: List[Dict[str, Any]],
+        err_text: str = "",
+    ) -> List[Dict[str, Any]]:
+        """
+        F01: A provider records every article it actually sent in `deliveries`. Anything without
+        a record after `deliver()` was not sent (target unavailable, permission error, network
+        failure): queue it for a later retry instead of losing it. Returns the items that were sent.
+        """
+        delivered: List[Dict[str, Any]] = []
+        if not self.storage or sub_id is None or not hasattr(self.storage, "has_delivery_record"):
+            return delivered
+        for it in items:
+            url = (it.get("article") or {}).get("url", "")
+            if not url:
+                continue
+            try:
+                recorded = self.storage.has_delivery_record(sub_id, url)
+                if recorded is True:
+                    self.storage.delete_pending_delivery(sub_id, url)
+                    delivered.append(it)
+                elif recorded is False:
+                    still_queued = self.storage.note_pending_failure(
+                        sub_id, it, error=err_text or "provider did not confirm delivery"
+                    )
+                    if still_queued:
+                        logger.warning(
+                            f"[補送] 推播未送達，已排入補送佇列 (Sub#{sub_id}, 平台={platform}): {url}"
+                        )
+                    else:
+                        logger.warning(
+                            f"[補送] 推播多次重試仍失敗，放棄補送 (Sub#{sub_id}, 平台={platform}): {url}"
+                        )
+            except Exception as e:
+                logger.debug(f"更新補送佇列失敗: {e}")
+        return delivered
+
+    async def _send_email_copy(
+        self,
+        subscriber: Dict[str, Any],
+        platform: str,
+        delivered_items: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Email copy mode: when the owner enabled `/email_copy` for this subscriber, every article
+        that was actually delivered on its main platform is also mailed to EMAIL_TO. A mail
+        failure never affects the main delivery and is not retried.
+        """
+        if platform == "email" or not self.storage:
+            return
+        provider = self._providers.get("email")
+        if provider is None:
+            return
+        try:
+            if self.storage.get_setting(f"email_copy:{int(subscriber['id'])}") != "1":
+                return
+            # Always mail the configured EMAIL_TO list; never derive an address from the
+            # subscriber's own fields (a display name could look like an e-mail address).
+            recipients = list(getattr(provider, "default_to_emails", []) or [])
+            if not recipients:
+                return
+            mail_sub = dict(subscriber)
+            mail_sub["target_id"] = ", ".join(recipients)
+            await provider.deliver(mail_sub, delivered_items, record=False)
+        except Exception as e:
+            logger.warning(f"[警告] Email 副本寄送失敗 (Sub#{subscriber.get('id')}): {e}")
 
     async def dispatch_sold_update(
         self,
@@ -572,9 +655,74 @@ class DeliveryManager:
     ) -> int:
         return await self.dispatcher.dispatch(sub, items)
 
+    async def retry_pending_deliveries(self, subscribers: List[Dict[str, Any]]) -> int:
+        """
+        F01: Re-send queued notifications whose retry time has come. Each article is re-read
+        first so an item that was sold or deleted in the meantime is dropped, not pushed.
+        Only the given (enabled) subscribers are processed; every query is subscriber-scoped.
+        """
+        if not self.storage or not hasattr(self.storage, "get_due_pending_deliveries"):
+            return 0
+        pushed_total = 0
+        for sub in subscribers:
+            sub_id = sub.get("id")
+            if sub_id is None:
+                continue
+            try:
+                due = self.storage.get_due_pending_deliveries(sub_id)
+            except Exception as e:
+                logger.debug(f"讀取補送佇列失敗 (Sub#{sub_id}): {e}")
+                continue
+            if not isinstance(due, list) or not due:
+                continue
+
+            ready: List[Dict[str, Any]] = []
+            for it in due:
+                art = it.get("article") or {}
+                url = art.get("url", "")
+                if self.crawler is not None:
+                    in_cd, _ = self.crawler.is_in_cooldown()
+                    if in_cd:
+                        break
+                    base = await self.crawler.fetch_article_full_detail(
+                        url,
+                        article_title=art.get("title", ""),
+                        article_author=art.get("author", ""),
+                    )
+                    status = base.get("fetch_status", 200)
+                    if base.get("deleted") or status == 404:
+                        self.storage.delete_pending_delivery(sub_id, url)
+                        logger.info(f"[補送] 原文已刪除，取消補送 (Sub#{sub_id}): {url}")
+                        continue
+                    if status != 200:
+                        # Could not re-check right now: leave it queued for the next cycle
+                        continue
+                    view = PTTCrawler.apply_keyword_view(base, it.get("matched_keyword") or "")
+                    if view.get("is_sold"):
+                        self.storage.delete_pending_delivery(sub_id, url)
+                        logger.info(f"[補送] 商品已售出或洽談中，取消補送 (Sub#{sub_id}): {url}")
+                        continue
+                ready.append(it)
+
+            if ready:
+                pushed = await self.dispatcher.dispatch(sub, ready)
+                pushed_total += pushed
+                if pushed:
+                    logger.info(f"[補送] 已補送 {pushed} 篇先前未送達的文章 (Sub#{sub_id})")
+        return pushed_total
+
     async def check_sold_deliveries_once(self, max_checks: int = 2) -> int:
         if not self.storage or not self.crawler:
             return 0
+
+        # R13: scale the per-cycle budget with the number of articles being followed, so a
+        # large backlog is still revisited within a reasonable time (2..6 articles per cycle).
+        try:
+            open_cnt = self.storage.count_open_followup_urls(max_age_hours=18)
+            if isinstance(open_cnt, int):
+                max_checks = max(max_checks, min(6, open_cnt // 20))
+        except Exception:
+            pass
 
         recent = self.storage.get_recent_unmarked_deliveries(
             max_age_hours=18, limit=max_checks * 2
