@@ -88,7 +88,7 @@ jobs:
           VERSION="${{ steps.version.outputs.tag }}"
           mkdir -p dist staging_win staging_mac staging_linux
 
-          CORE_FILES=(bot.py config.py delivery.py embeds.py groq_agent.py groq_scheduler.py ptt_crawler.py setup_wizard.py storage.py sold_rules.py boards.py boards.json timeutil.py telegram_bot.py email_notifier.py requirements.txt .env.example README.md README_EN.md PRIVACY.md LICENSE)
+          CORE_FILES=(bot.py config.py delivery.py embeds.py groq_agent.py groq_scheduler.py ptt_crawler.py setup_wizard.py storage.py sold_rules.py boards.py boards.json timeutil.py telegram_bot.py email_notifier.py requirements.txt .env.example README.md README_EN.md CHANGELOG.md PRIVACY.md LICENSE)
 
           # 1. Windows Archive (Zip)
           for f in "${CORE_FILES[@]}"; do cp "$f" staging_win/; done
