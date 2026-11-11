@@ -580,6 +580,7 @@ class TestConfigAndMultiPlatformDeliveryWiring(unittest.IsolatedAsyncioTestCase)
                  patch.object(config, "TELEGRAM_BOT_TOKEN", "123:test_token"), \
                  patch("telegram_bot.TelegramBot") as mock_tg_bot_cls:
                 mock_tg_instance = MagicMock()
+                mock_tg_instance.initialize = AsyncMock(return_value=True)
                 mock_tg_instance.start_polling = AsyncMock()
                 mock_tg_instance.stop = AsyncMock()
                 mock_tg_bot_cls.return_value = mock_tg_instance

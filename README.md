@@ -8,7 +8,7 @@
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR%20Multi--Arch-2496ED?logo=docker&logoColor=white)](https://github.com/jasonxp516/ptt-dc-bot/pkgs/container/ptt-dc-bot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-結合規則過濾與 Groq LLM 語意判讀的 PTT 看板監控與多平台推播機器人，支援 Discord、Telegram 與 Email SMTP。專為 `HardwareSale`、`MacShop`、`nb-shopping`、`Gamesale` 等二手交易看板設計，解決已售出誤報、合售文混淆與型號誤判價格等痛點。
+結合規則過濾與 Groq LLM 語意判讀的 PTT 看板監控與多平台推播機器人，支援 Discord、Telegram 與 Email SMTP（Email 為實驗性功能：寄信模組已內建，但目前尚無建立 Email 訂閱的指令，設定後不會收到信）。專為 `HardwareSale`、`MacShop`、`nb-shopping`、`Gamesale` 等二手交易看板設計，解決已售出誤報、合售文混淆與型號誤判價格等痛點。
 
 ---
 

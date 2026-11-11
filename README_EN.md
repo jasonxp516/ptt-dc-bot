@@ -8,7 +8,7 @@
 [![Docker Image](https://img.shields.io/badge/Docker-GHCR%20Multi--Arch-2496ED?logo=docker&logoColor=white)](https://github.com/jasonxp516/ptt-dc-bot/pkgs/container/ptt-dc-bot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An asynchronous PTT (Taiwan Bulletin Board System) board monitor and multi-platform alert bot (supporting Discord, Telegram, and Email SMTP) combining deterministic rule filtering with Groq LLM semantic reasoning. Designed specifically for fast-moving second-hand trading boards (`HardwareSale`, `MacShop`, `nb-shopping`, `Gamesale`, `MobileComm`).
+An asynchronous PTT (Taiwan Bulletin Board System) board monitor and multi-platform alert bot (supporting Discord and Telegram; Email SMTP is experimental: the mail provider is built in, but there is no command to create an Email subscription yet, so no mail is sent) combining deterministic rule filtering with Groq LLM semantic reasoning. Designed specifically for fast-moving second-hand trading boards (`HardwareSale`, `MacShop`, `nb-shopping`, `Gamesale`, `MobileComm`).
 
 ---
 

@@ -42,6 +42,8 @@ class TelegramAPIClient:
         self.api_base = f"{base_url.rstrip('/')}/bot{self.token}"
         self._session = session
         self._owns_session = False
+        # R05: error code of the most recent getUpdates call (None = success)
+        self.last_error_code: Optional[int] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -133,7 +135,15 @@ class TelegramAPIClient:
         if offset is not None:
             payload["offset"] = offset
         data = await self.request("getUpdates", payload)
-        return data.get("result", []) if data.get("ok") else []
+        if data.get("ok"):
+            self.last_error_code = None
+            return data.get("result", [])
+        try:
+            self.last_error_code = int(data.get("error_code") or 500)
+        except (TypeError, ValueError):
+            self.last_error_code = 500
+        self.last_error_description = str(data.get("description") or "")
+        return []
 
     async def send_message(
         self,
@@ -670,13 +680,19 @@ class TelegramBot:
         self._running = False
         self.last_update_id: Optional[int] = None
         self.bot_info: Dict[str, Any] = {}
+        self.init_error_code: Optional[int] = None
 
     async def initialize(self) -> bool:
         """驗證 Token 並取得 Bot 基本資料"""
         me_resp = await self.api.get_me()
         if not me_resp.get("ok"):
+            try:
+                self.init_error_code = int(me_resp.get("error_code") or 500)
+            except (TypeError, ValueError):
+                self.init_error_code = 500
             logger.error(f"[錯誤] Telegram Bot 初始化失敗: {me_resp.get('description')}")
             return False
+        self.init_error_code = None
         self.bot_info = me_resp.get("result", {})
         username = self.bot_info.get("username", "UnknownBot")
         logger.info(f"[成功] Telegram Bot 已就緒: @{username} (ID: {self.bot_info.get('id')})")
@@ -1015,9 +1031,36 @@ class TelegramBot:
         self._running = True
         logger.info("[資訊] Telegram Bot 長輪詢 (Long Polling) 服務啟動")
 
+        fail_backoff = 5.0
         while self._running:
             try:
                 updates = await self.api.get_updates(offset=self.last_update_id, timeout=20)
+                # R05: a rejected getUpdates returns an empty list immediately; without a pause
+                # this loop would re-send the request continuously.
+                err_code = getattr(self.api, "last_error_code", None)
+                if not updates and isinstance(err_code, int):
+                    err_desc = getattr(self.api, "last_error_description", "")
+                    if err_code in (401, 404):
+                        logger.error(
+                            f"[錯誤] Telegram Bot Token 無效 (HTTP {err_code})，已停止 Telegram 長輪詢: {err_desc}"
+                        )
+                        self._running = False
+                        break
+                    if err_code == 409:
+                        wait_s = 30.0
+                        logger.error(
+                            "[錯誤] Telegram 回報 409 Conflict：同一個 Bot Token 正被另一個程式輪詢"
+                            "（例如兩台機器同時執行），30 秒後重試"
+                        )
+                    else:
+                        wait_s = fail_backoff
+                        fail_backoff = min(60.0, fail_backoff * 2)
+                        logger.warning(
+                            f"[警告] Telegram getUpdates 失敗 (HTTP {err_code})，{wait_s:.0f} 秒後重試: {err_desc}"
+                        )
+                    await asyncio.sleep(wait_s)
+                    continue
+                fail_backoff = 5.0
                 for u in updates:
                     u_id = u.get("update_id") if isinstance(u, dict) else None
                     if u_id is None:

@@ -328,7 +328,7 @@ class GroqScheduler:
 
             while not ready_models:
                 now = time.time()
-                min_wait = 999.0
+                min_wait = float("inf")
 
                 # Pass 1: prefer idle models (in_flight == 0)
                 for m in job.allowed_models:
@@ -364,6 +364,13 @@ class GroqScheduler:
                 if remaining_budget <= 0:
                     raise GroqBusyError(
                         f"所有 AI 模型目前皆處於額度冷卻或忙碌中 (已等待逾 {max_wait_budget:.0f}s)，請稍後再試。"
+                    )
+                # R02: no model can become available before the deadline -> fail now instead of
+                # sleeping until the deadline (which stalled the poll loop for 120s per article).
+                if min_wait != float("inf") and min_wait > remaining_budget:
+                    raise GroqBusyError(
+                        f"所有 AI 模型目前皆處於額度冷卻或忙碌中，最快需 {min_wait:.0f}s 後恢復，"
+                        f"超過任務期限，請稍後再試。"
                     )
 
                 step_cap = 5.0 if job.priority == P0_INTERACTIVE else 10.0
@@ -432,8 +439,22 @@ class GroqScheduler:
                             logger.warning(
                                 f"[GroqScheduler] {model_name} 觸發 429，冷卻 {cd_sec:.1f}s，自動切換下一個模型"
                             )
-                        err_msg = data.get("error", {}).get("message", str(data))
+                        err_obj = data.get("error") if isinstance(data, dict) else None
+                        err_obj = err_obj if isinstance(err_obj, dict) else {}
+                        err_msg = err_obj.get("message", str(data))
                         last_err = f"HTTP {status} ({model_name}): {err_msg}"
+                        # R03: a model Groq no longer serves is benched for an hour so the other
+                        # models keep working; set GROQ_MODELS in .env to replace it.
+                        err_code = str(err_obj.get("code") or "")
+                        if bucket and (
+                            status == 404
+                            or err_code in ("model_not_found", "model_decommissioned")
+                        ):
+                            bucket.cooldown_until = time.time() + 3600
+                            logger.error(
+                                f"[GroqScheduler] 模型 {model_name} 不存在或已下架 ({err_msg})，"
+                                f"停用 1 小時。請在 .env 以 GROQ_MODELS 指定可用模型。"
+                            )
                 except Exception as e:
                     logger.warning(f"[GroqScheduler] {model_name} 請求失敗: {e}")
                     last_err = str(e)

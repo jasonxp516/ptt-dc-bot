@@ -79,8 +79,9 @@ def _parse_language(raw: str) -> str:
 
 BOT_LANGUAGE = _parse_language(os.getenv("BOT_LANGUAGE", DEFAULT_LANGUAGE))
 
-POLL_MIN = _parse_int(os.getenv("POLL_INTERVAL_MIN", "90"), 90)
-POLL_MAX = _parse_int(os.getenv("POLL_INTERVAL_MAX", "150"), 150)
+# Lower bound of 30s protects PTT from a mistyped interval; MAX is never below MIN.
+POLL_MIN = max(30, _parse_int(os.getenv("POLL_INTERVAL_MIN", "90"), 90))
+POLL_MAX = max(POLL_MIN, _parse_int(os.getenv("POLL_INTERVAL_MAX", "150"), 150))
 
 # N1: Articles whose PTT post timestamp (M.<epoch>.A.xxx) is older than this are treated as
 # history: marked seen silently and never pushed. Prevents low-traffic boards from re-pushing
@@ -98,12 +99,25 @@ HEARTBEAT_FILE = os.getenv(
     os.path.join(os.path.dirname(os.path.abspath(DB_PATH)) or BASE_DIR, "heartbeat"),
 ).strip()
 
-# Active Groq models (each has its own 8,000 TPM / 1,000 RPD free-tier bucket)
-ALTERNATING_MODELS_POOL = [
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.8-27b",
-    "openai/gpt-oss-20b",
-]
+def _build_models_pool() -> list:
+    """
+    Active Groq models (each has its own 8,000 TPM / 1,000 RPD free-tier bucket).
+    R03: GROQ_MODELS (comma separated) replaces the whole pool, so a model Groq retires can be
+    swapped from .env. Otherwise the pool is GROQ_MODEL, the built-in secondary model and
+    GROQ_FAST_MODEL (identical to the previous fixed list when those are left at their defaults).
+    """
+    raw = os.getenv("GROQ_MODELS", "").replace(";", ",")
+    pool = [m.strip() for m in raw.split(",") if m.strip()]
+    if not pool:
+        pool = [GROQ_MODEL, "qwen/qwen3.8-27b", GROQ_FAST_MODEL]
+    deduped = []
+    for m in pool:
+        if m and m not in deduped:
+            deduped.append(m)
+    return deduped or ["openai/gpt-oss-120b"]
+
+
+ALTERNATING_MODELS_POOL = _build_models_pool()
 
 # Global limits to protect PTT & Groq
 MAX_GLOBAL_ACTIVE_BOARDS = 25

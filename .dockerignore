@@ -28,5 +28,7 @@ IMPLEMENTATION_GUIDE.md
 # Local-only material that must not be baked into images
 pre_release_verification/
 antigravity prompt.md
-docs/*.pdf
-docs/*.html
+docs/*
+!docs/deploy-*.md
+CLAUDE.md
+.claude/

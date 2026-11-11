@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
@@ -2193,6 +2193,9 @@ class BotStorage:
             self._conn.execute("DELETE FROM article_cache WHERE fetched_at < ?", (cutoff_cache,))
             self._conn.execute("DELETE FROM article_ai_cache WHERE created_at < ?", (cutoff_cache,))
             self._conn.execute("DELETE FROM deliveries WHERE delivered_at < ?", (cutoff_seen,))
+            # Daily usage counters are only read for the current day; keep 30 days of history
+            usage_cutoff = (now_tpe() - timedelta(days=30)).strftime("%Y-%m-%d")
+            self._conn.execute("DELETE FROM usage_counters WHERE day < ?", (usage_cutoff,))
             self._conn.commit()
             rowcount = cur.rowcount
         self.prune_idle_boards(min_idle_seconds=86400)

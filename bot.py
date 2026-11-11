@@ -92,6 +92,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # F02: bounded per-cycle back-paging and processing batch for each board
 BACKFILL_MAX_PAGES = 5
 MAX_NEW_ARTICLES_PER_CYCLE = 20
+# R01: articles kept unseen for a retry (fuzzy AI incomplete / transient detail fetch failure) are
+# processed in their own small lane so they can never crowd fresh articles out of the batch above.
+MAX_RETRY_ARTICLES_PER_CYCLE = 5
+FUZZY_RETRY_MAX_ATTEMPTS = 3
+FUZZY_RETRY_MAX_AGE_SEC = 1800
 _log_dir = os.path.dirname(os.path.abspath(LOG_PATH))
 if _log_dir:
     os.makedirs(_log_dir, exist_ok=True)
@@ -234,6 +239,22 @@ class PTTDiscordBot(discord.Client):
                 return True
         return False
 
+    def _retry_state(self) -> Dict[str, Dict[str, Any]]:
+        """R01: url -> {"attempts", "first_ts", "fuzzy"} for articles deliberately left unseen."""
+        state = getattr(self, "_article_retry_state", None)
+        if state is None:
+            state = {}
+            self._article_retry_state = state
+        return state
+
+    def _note_retry(self, url: str, fuzzy: bool) -> Dict[str, Any]:
+        entry = self._retry_state().setdefault(
+            url, {"attempts": 0, "first_ts": time.time(), "fuzzy": False}
+        )
+        entry["attempts"] += 1
+        entry["fuzzy"] = bool(entry["fuzzy"] or fuzzy)
+        return entry
+
     def _write_heartbeat(self) -> None:
         hb_path = os.getenv("HEARTBEAT_FILE", "").strip()
         if not hb_path:
@@ -267,10 +288,29 @@ class PTTDiscordBot(discord.Client):
                     crawler=self.crawler,
                     delivery=self.delivery,
                 )
-                self._tg_task = asyncio.create_task(self.tg_bot.start_polling())
+                self._tg_task = asyncio.create_task(self._run_telegram())
                 logger.info("[資訊] Telegram 機器人長輪詢 (Long Polling) 背景任務已啟動")
             except Exception as e:
                 logger.error(f"[錯誤] 啟動 Telegram 機器人長輪詢失敗: {e}", exc_info=True)
+
+    async def _run_telegram(self) -> None:
+        """R05: validate the token and register the command menu before long polling starts."""
+        while True:
+            try:
+                if await self.tg_bot.initialize():
+                    break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning(f"[警告] Telegram Bot 初始化發生例外: {e}")
+            if getattr(self.tg_bot, "init_error_code", None) in (401, 404):
+                logger.error(
+                    "[錯誤] Telegram Bot Token 無效，Telegram 功能未啟動。請檢查 TELEGRAM_BOT_TOKEN 後重新啟動。"
+                )
+                return
+            logger.warning("[警告] Telegram Bot 初始化失敗（可能為暫時性網路問題），60 秒後重試")
+            await asyncio.sleep(60)
+        await self.tg_bot.start_polling()
 
     async def close(self) -> None:
         if self._poll_task and not self._poll_task.done():
@@ -684,8 +724,16 @@ class PTTDiscordBot(discord.Client):
                 s["id"] for s in enabled_subs if s.get("push_mode") == "all"
             ]
 
+            retry_state = self._retry_state()
+            if retry_state:
+                expire_before = time.time() - 2 * 86400
+                for stale_url in [u for u, e in retry_state.items() if e["first_ts"] < expire_before]:
+                    retry_state.pop(stale_url, None)
+
             for idx, board_info in enumerate(boards):
                 board_name = board_info["name"]
+                # R02: refresh the heartbeat per board so a long cycle is not reported as unhealthy
+                self._write_heartbeat()
                 needs_reinit = self.storage.should_reinit_board(board_info)
 
                 # Only scan boards that have active rules across any enabled subscriber
@@ -786,15 +834,49 @@ class PTTDiscordBot(discord.Client):
                     )
                     continue
 
-                if len(new_articles) > MAX_NEW_ARTICLES_PER_CYCLE:
-                    # F02: Process the OLDEST batch first and leave the rest unseen for the next
-                    # cycle (they are newer than what we mark seen, so the bounded back-paging
-                    # above still reaches them). Never mark unprocessed articles as seen.
-                    logger.info(
-                        f"看板 {board_name} 單輪新文章達 {len(new_articles)} 篇，本輪先處理較舊的 "
-                        f"{MAX_NEW_ARTICLES_PER_CYCLE} 篇，其餘留待下輪"
+                # R01: fuzzy retries that have been pending too long are given up (keyword hits
+                # for them were already delivered on the first pass) so they stop being re-checked.
+                now_ts = time.time()
+                expired = [
+                    a for a in new_articles
+                    if retry_state.get(a["url"], {}).get("fuzzy")
+                    and now_ts - retry_state[a["url"]]["first_ts"] > FUZZY_RETRY_MAX_AGE_SEC
+                ]
+                if expired:
+                    self.storage.mark_articles_seen(expired)
+                    expired_urls = {a["url"] for a in expired}
+                    for u in expired_urls:
+                        retry_state.pop(u, None)
+                    new_articles = [a for a in new_articles if a["url"] not in expired_urls]
+                    logger.warning(
+                        f"看板 {board_name} 有 {len(expired)} 篇文章之 AI 模糊判斷逾 "
+                        f"{FUZZY_RETRY_MAX_AGE_SEC // 60} 分鐘仍未完成，放棄模糊判斷並標記已讀"
                     )
-                    new_articles = new_articles[:MAX_NEW_ARTICLES_PER_CYCLE]
+                    if not new_articles:
+                        self.storage.update_board_status(
+                            board_name, True, "正常盯梢中 (無新文章)", scanned_now=True
+                        )
+                        continue
+
+                # F02 / R01: Process the OLDEST fresh batch first and leave the rest unseen for
+                # the next cycle (never mark unprocessed articles as seen). Articles waiting for
+                # a retry get a separate small lane, so a long AI or PTT failure cannot occupy
+                # the whole batch and block fresh articles.
+                fresh_articles = [a for a in new_articles if a["url"] not in retry_state]
+                retry_articles = [a for a in new_articles if a["url"] in retry_state]
+                if (
+                    len(fresh_articles) > MAX_NEW_ARTICLES_PER_CYCLE
+                    or len(retry_articles) > MAX_RETRY_ARTICLES_PER_CYCLE
+                ):
+                    logger.info(
+                        f"看板 {board_name} 單輪待處理 {len(fresh_articles)} 篇新文 / "
+                        f"{len(retry_articles)} 篇重試，本輪先處理較舊的 "
+                        f"{MAX_NEW_ARTICLES_PER_CYCLE} 篇新文與 {MAX_RETRY_ARTICLES_PER_CYCLE} 篇重試，其餘留待下輪"
+                    )
+                    batch_urls = {
+                        a["url"] for a in fresh_articles[:MAX_NEW_ARTICLES_PER_CYCLE]
+                    } | {a["url"] for a in retry_articles[:MAX_RETRY_ARTICLES_PER_CYCLE]}
+                    new_articles = [a for a in new_articles if a["url"] in batch_urls]
                 summary["new_articles"] += len(new_articles)
 
                 board_fuzzy_rules = self.storage.get_fuzzy_rules(board=board_name)
@@ -839,6 +921,7 @@ class PTTDiscordBot(discord.Client):
                         logger.warning(
                             f"看板 {board_name} 文章內文抓取暫時失敗 (status={fetch_st})，保留於下輪重試: {art['url']}"
                         )
+                        self._note_retry(art["url"], fuzzy=False)
                         continue
 
                     evaluated_articles.append(art)
@@ -920,11 +1003,19 @@ class PTTDiscordBot(discord.Client):
                             # F03: AI unavailable (429 / timeout). Deliver what is certain now
                             # (keyword hits), but keep the article unseen so fuzzy rules are
                             # retried next cycle; per-subscriber URL dedupe prevents re-sending
-                            # what was already delivered. Bounded by MAX_ARTICLE_AGE_HOURS.
-                            logger.warning(
-                                f"看板 {board_name} 模糊規則 AI 判斷未完成，文章保留於下輪重試: {art['url']}"
-                            )
-                            fuzzy_retry_urls.add(art["url"])
+                            # what was already delivered.
+                            # R01: bounded to FUZZY_RETRY_MAX_ATTEMPTS / FUZZY_RETRY_MAX_AGE_SEC.
+                            entry = self._note_retry(art["url"], fuzzy=True)
+                            if entry["attempts"] >= FUZZY_RETRY_MAX_ATTEMPTS:
+                                logger.warning(
+                                    f"看板 {board_name} 模糊規則 AI 判斷連續 {entry['attempts']} 次未完成，"
+                                    f"放棄模糊判斷並標記已讀: {art['url']}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"看板 {board_name} 模糊規則 AI 判斷未完成，文章保留於下輪重試: {art['url']}"
+                                )
+                                fuzzy_retry_urls.add(art["url"])
 
                     sub_fuzzy_map: Dict[int, List[Dict[str, Any]]] = {}
                     for fh in fuzzy_hits_all:
@@ -974,6 +1065,8 @@ class PTTDiscordBot(discord.Client):
                     ]
                 if evaluated_articles:
                     self.storage.mark_articles_seen(evaluated_articles)
+                    for a in evaluated_articles:
+                        retry_state.pop(a["url"], None)
 
                 self.storage.update_board_status(
                     board_name,

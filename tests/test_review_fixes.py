@@ -654,3 +654,157 @@ class TestTelegramFixes(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# R01..R05: second review (v1.2.1)
+# ---------------------------------------------------------------------------
+class TestR01RetryLane(_StorageCase):
+    def _setup(self, n_old):
+        now = int(time.time())
+        fz = self.add_sub("u1")
+        kw = self.add_sub("u2")
+        self.storage.add_fuzzy_rule("便宜的顯卡", board=BOARD, subscriber_id=fz["id"])
+        self.storage.add_keyword("3060", board=BOARD, subscriber_id=kw["id"])
+        old = [make_article(now - 3000 + i, i, f"[賣] 雜物 #{i}") for i in range(n_old)]
+        return now, old
+
+    def test_pending_fuzzy_retries_do_not_block_fresh_articles(self):
+        now, old = self._setup(20)
+        delivery = FakeDelivery()
+        crawler = FakeCrawler(old)
+        bot = make_poll_bot(
+            self.storage, crawler, agent=FakeAgent(fuzzy_complete=False), delivery=delivery
+        )
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))  # all 20 become retry-pending
+        fresh = make_article(now - 10, 99, "[賣] RTX 3060")
+        crawler.articles = old + [fresh]
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        pushed = {it["article"]["url"] for _, items in delivery.sent for it in items}
+        self.assertIn(fresh["url"], pushed)
+
+    def test_fuzzy_retry_gives_up_after_max_attempts(self):
+        import bot as bot_module
+
+        now, old = self._setup(1)
+        bot = make_poll_bot(self.storage, FakeCrawler(old), agent=FakeAgent(fuzzy_complete=False))
+        for _ in range(bot_module.FUZZY_RETRY_MAX_ATTEMPTS - 1):
+            asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+            self.assertEqual(len(self.storage.filter_unseen_articles(old)), 1)
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        self.assertEqual(self.storage.filter_unseen_articles(old), [])
+        self.assertEqual(bot._article_retry_state, {})
+
+    def test_fuzzy_retry_gives_up_after_max_age(self):
+        import bot as bot_module
+
+        now, old = self._setup(1)
+        bot = make_poll_bot(self.storage, FakeCrawler(old), agent=FakeAgent(fuzzy_complete=False))
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        bot._article_retry_state[old[0]["url"]]["first_ts"] -= bot_module.FUZZY_RETRY_MAX_AGE_SEC + 5
+        bot.agent = MagicMock()  # must not be consulted again for an expired retry
+        bot.agent.verify_unsold_semantic = AsyncMock(side_effect=AssertionError)
+        bot.agent.evaluate_article_fuzzy_rules_ex = AsyncMock(side_effect=AssertionError)
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        self.assertEqual(self.storage.filter_unseen_articles(old), [])
+
+    def test_retry_lane_is_capped_per_cycle(self):
+        import bot as bot_module
+
+        now, old = self._setup(12)
+        agent = FakeAgent(fuzzy_complete=False)
+        calls = []
+        orig = agent.evaluate_article_fuzzy_rules_ex
+
+        async def counting(art, detail, rules):
+            calls.append(art["url"])
+            return await orig(art, detail, rules)
+
+        agent.evaluate_article_fuzzy_rules_ex = counting
+        bot = make_poll_bot(self.storage, FakeCrawler(old), agent=agent)
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        self.assertEqual(len(calls), 12)
+        calls.clear()
+        asyncio.run(PTTDiscordBot.run_single_poll_cycle(bot))
+        self.assertEqual(len(calls), bot_module.MAX_RETRY_ARTICLES_PER_CYCLE)
+
+
+class TestR02SchedulerFailFast(unittest.IsolatedAsyncioTestCase):
+    async def test_all_models_cooling_past_deadline_fails_immediately(self):
+        sched = GroqScheduler(api_key="k")
+        for b in sched.buckets.values():
+            b.cooldown_until = time.time() + 3600
+        t0 = time.time()
+        with self.assertRaises(GroqBusyError):
+            await sched.submit_chat([{"role": "user", "content": "x"}])
+        self.assertLess(time.time() - t0, 2.0)
+        await sched.close()
+
+
+class TestR03ModelPool(unittest.TestCase):
+    def test_groq_models_env_overrides_pool(self):
+        with patch.dict(os.environ, {"GROQ_MODELS": "a/one, b/two;a/one"}):
+            self.assertEqual(config._build_models_pool(), ["a/one", "b/two"])
+
+    def test_default_pool_uses_configured_models(self):
+        with patch.dict(os.environ, {"GROQ_MODELS": ""}), patch.object(
+            config, "GROQ_MODEL", "x/primary"
+        ), patch.object(config, "GROQ_FAST_MODEL", "x/fast"):
+            pool = config._build_models_pool()
+        self.assertEqual(pool[0], "x/primary")
+        self.assertEqual(pool[-1], "x/fast")
+
+
+class TestR05TelegramPolling(unittest.IsolatedAsyncioTestCase):
+    def _bot(self, error_code):
+        api = MagicMock()
+        api.last_error_code = error_code
+        api.last_error_description = "rejected"
+        api.get_updates = AsyncMock(return_value=[])
+        return TelegramBot(token="1:x", storage=None, api_client=api, admin_user_ids=[]), api
+
+    async def test_invalid_token_stops_polling(self):
+        tg, api = self._bot(401)
+        await asyncio.wait_for(tg.start_polling(), timeout=2)
+        self.assertEqual(api.get_updates.await_count, 1)
+        self.assertFalse(tg._running)
+
+    async def test_conflict_waits_before_retrying(self):
+        tg, api = self._bot(409)
+        sleeps = []
+
+        async def fake_sleep(sec):
+            sleeps.append(sec)
+            tg._running = False
+
+        with patch("telegram_bot.asyncio.sleep", fake_sleep):
+            await asyncio.wait_for(tg.start_polling(), timeout=2)
+        self.assertEqual(api.get_updates.await_count, 1)
+        self.assertEqual(sleeps, [30.0])
+
+    async def test_get_updates_records_error_code(self):
+        client = TelegramAPIClient(token="1:x")
+        client.request = AsyncMock(return_value={"ok": False, "error_code": 409, "description": "Conflict"})
+        self.assertEqual(await client.get_updates(), [])
+        self.assertEqual(client.last_error_code, 409)
+        client.request = AsyncMock(return_value={"ok": True, "result": [{"update_id": 1}]})
+        self.assertEqual(len(await client.get_updates()), 1)
+        self.assertIsNone(client.last_error_code)
+
+
+class TestR08R09Misc(_StorageCase):
+    def test_old_usage_counters_are_pruned(self):
+        sub = self.add_sub("u1")
+        self.storage._conn.execute(
+            "INSERT INTO usage_counters (subscriber_id, day, kind, count) VALUES (?, '2020-01-01', 'ai_chat', 3)",
+            (sub["id"],),
+        )
+        self.storage.check_and_increment_usage(sub["id"], "ai_chat")
+        self.storage.cleanup_old_articles()
+        rows = self.storage._conn.execute("SELECT day FROM usage_counters").fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertNotEqual(rows[0]["day"], "2020-01-01")
+
+    def test_poll_interval_has_floor(self):
+        self.assertGreaterEqual(config.POLL_MIN, 30)
+        self.assertGreaterEqual(config.POLL_MAX, config.POLL_MIN)
